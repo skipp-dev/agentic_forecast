@@ -1,0 +1,35 @@
+# Basic settings for the AGENTIC_FORECAST application
+
+[langsmith]
+# To enable tracing, set the following environment variables:
+# LANGCHAIN_TRACING_V2="true"
+# LANGCHAIN_API_KEY="dac5703b7d84b2da510685cf104b95a_ccddfc0480"
+# LANGCHAIN_PROJECT="AGENTIC_FORECAST"
+api_key = "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"
+project = "AGENTIC_FORECAST"
+
+[ibkr]
+host = "localhost"
+# List of ports to try for TWS/Gateway.
+# When running in Docker with host networking on Windows:
+# - Docker sees Windows localhost as 127.0.0.1
+# - 7497 = TWS Paper Trading (default)
+# - 7496 = TWS Live Trading
+# - 4002 = IB Gateway Paper
+# - 4001 = IB Gateway Live
+ports = [7497, 7496, 4002, 4001]
+client_id = 1
+
+[alpha_vantage]
+api_key = "FB9DP7SLEVYHP20J"
+
+[openai]
+api_key = "YOUR_OPENAI_API_KEY_HERE" # REMOVED FOR SECURITY
+
+[database]
+# Example for SQLite, for Postgres use: "postgresql://user:password@host/dbname"
+uri = "sqlite:///AGENTIC_FORECAST.db"
+
+[logging]
+level = "INFO"
+
