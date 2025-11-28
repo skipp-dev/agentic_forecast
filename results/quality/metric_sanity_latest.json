@@ -1,0 +1,107 @@
+{
+  "run_metadata": {
+    "run_id": "2025-11-28T21-02-30Z",
+    "evaluated_at": "2025-11-28T21:02:30.202926Z",
+    "source_file": "data/metrics/evaluation_results_baseline_latest.csv",
+    "n_rows": 1972,
+    "symbols_covered": 986,
+    "horizons_covered": [
+      "1",
+      "5"
+    ]
+  },
+  "overall_status": {
+    "status": "failed",
+    "severity": "low",
+    "issue_count": 1,
+    "summary": "Found 1 quality issues"
+  },
+  "metric_summaries": {
+    "mae": {
+      "mean": 2.18,
+      "std": 4.544,
+      "min": 0.0,
+      "max": 58.658,
+      "unique_values": 832,
+      "issues": []
+    },
+    "mape": {
+      "mean": 0.039,
+      "std": 0.04,
+      "min": 0.0,
+      "max": 0.446,
+      "unique_values": 980,
+      "issues": []
+    },
+    "smape": {
+      "mean": 0.038,
+      "std": 0.038,
+      "min": 0.0,
+      "max": 0.358,
+      "unique_values": 981,
+      "issues": []
+    },
+    "swase": {
+      "mean": 0.041,
+      "std": 0.043,
+      "min": 0.0,
+      "max": 0.479,
+      "unique_values": 981,
+      "issues": []
+    },
+    "directional_accuracy": {
+      "mean": 0.013,
+      "std": 0.067,
+      "min": 0.0,
+      "max": 1.0,
+      "unique_values": 3,
+      "issues": []
+    }
+  },
+  "horizon_issues": [],
+  "symbol_examples": [
+    {
+      "symbol": "ACDC_daily",
+      "target_horizon": "5",
+      "issues": [
+        "SWASE = 0.10 \u2013 far above peer average (0.04)."
+      ]
+    },
+    {
+      "symbol": "ACDC",
+      "target_horizon": "5",
+      "issues": [
+        "SWASE = 0.10 \u2013 far above peer average (0.04)."
+      ]
+    },
+    {
+      "symbol": "ACHR_daily",
+      "target_horizon": "5",
+      "issues": [
+        "SWASE = 0.10 \u2013 far above peer average (0.04)."
+      ]
+    },
+    {
+      "symbol": "ACHR",
+      "target_horizon": "5",
+      "issues": [
+        "SWASE = 0.10 \u2013 far above peer average (0.04)."
+      ]
+    },
+    {
+      "symbol": "ADAP_daily",
+      "target_horizon": "1",
+      "issues": [
+        "SWASE = 0.18 \u2013 far above peer average (0.04)."
+      ]
+    }
+  ],
+  "sanity_flags": {
+    "has_smape_column": true,
+    "has_swase_column": true,
+    "too_few_unique_smape_values": false,
+    "too_few_unique_swase_values": false,
+    "high_smape_share_ge_1_0": false,
+    "high_swase_share_ge_3_0": false
+  }
+}

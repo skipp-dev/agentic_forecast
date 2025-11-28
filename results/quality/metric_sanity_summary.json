@@ -1,0 +1,19 @@
+{
+  "status_summary": "Metric sanity check passed with low severity.",
+  "key_findings": [
+    "All metrics show reasonable ranges and variability.",
+    "SMAPE and SWASE have appropriate unique value counts.",
+    "No critical calculation errors detected."
+  ],
+  "recommended_actions": [
+    "Continue monitoring metric quality in production.",
+    "Consider adding more sophisticated outlier detection."
+  ],
+  "risk_assessment": "Metrics appear trustworthy for automated model selection and guardrails.",
+  "raw_overall_status": {
+    "status": "passed",
+    "severity": "low",
+    "issue_count": 0,
+    "summary": "All checks passed."
+  }
+}

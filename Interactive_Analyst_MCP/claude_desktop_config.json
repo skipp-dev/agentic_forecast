@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "interactive-analyst": {
+      "command": "python",
+      "args": ["C:\\Users\\spreu\\Documents\\agentic_forecast\\Interactive_Analyst_MCP\\server.py"],
+      "cwd": "C:\\Users\\spreu\\Documents\\agentic_forecast\\Interactive_Analyst_MCP",
+      "env": {
+        "PYTHONPATH": "C:\\Users\\spreu\\Documents\\agentic_forecast\\Interactive_Analyst_MCP"
+      }
+    }
+  }
+}

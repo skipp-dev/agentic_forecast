@@ -1,0 +1,5 @@
+# Interactive Analyst MCP Server Requirements
+# Python-based MCP server for natural language processing
+
+# No external dependencies required - uses only Python standard library
+# The server integrates with the existing interactive.py analyst script

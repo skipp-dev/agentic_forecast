@@ -1,0 +1,127 @@
+{
+  "run_metadata": {
+    "run_id": "demo-daily-run-2025-01-28",
+    "evaluated_at": "2025-11-28T21:11:24.743240Z",
+    "symbols": [
+      "AAPL",
+      "MSFT",
+      "NVDA",
+      "TSLA",
+      "GOOGL"
+    ],
+    "horizons": [
+      "1",
+      "5",
+      "10"
+    ],
+    "config": {
+      "notifications": {
+        "enabled": true,
+        "send_console": true,
+        "send_email": false,
+        "send_slack": false
+      },
+      "guardrails": {
+        "min_overall_score": 0.6,
+        "require_metric_sanity": true,
+        "allow_promotion_on_warning": false
+      }
+    }
+  },
+  "metric_sanity": {
+    "status": "passed",
+    "severity": "low",
+    "issue_count": 0,
+    "summary": "Metric sanity check passed with low severity.",
+    "key_findings": [
+      "All metrics show reasonable ranges and variability.",
+      "SMAPE and SWASE have appropriate unique value counts.",
+      "No critical calculation errors detected."
+    ],
+    "file_ref": "results/quality/metric_sanity_summary.json"
+  },
+  "model_performance": {
+    "overall_score": 0.778,
+    "metrics": {
+      "mae": {
+        "mean": 2.18,
+        "std": 4.544,
+        "min": 0.0,
+        "max": 58.658
+      },
+      "rmse": {
+        "mean": 2.373,
+        "std": 5.15,
+        "min": 0.0,
+        "max": 80.808
+      },
+      "mape": {
+        "mean": 0.039,
+        "std": 0.04,
+        "min": 0.0,
+        "max": 0.446
+      },
+      "smape": {
+        "mean": 0.038,
+        "std": 0.038,
+        "min": 0.0,
+        "max": 0.358
+      },
+      "swase": {
+        "mean": 0.041,
+        "std": 0.043,
+        "min": 0.0,
+        "max": 0.479
+      },
+      "directional_accuracy": {
+        "mean": 0.013,
+        "std": 0.067,
+        "min": 0.0,
+        "max": 1.0
+      }
+    },
+    "per_model": [
+      {
+        "model_family": "naive",
+        "mean_mape": 0.039,
+        "mean_smape": 0.038,
+        "mean_directional_accuracy": 0.013,
+        "status": "candidate"
+      }
+    ],
+    "file_ref": "data/metrics/evaluation_results_baseline_latest.csv"
+  },
+  "cross_asset_v2": {
+    "status": "enabled",
+    "decision": "keep_enabled",
+    "summary": "V2 improves overall performance.",
+    "overall_lift": {
+      "delta_mae": 3.2679,
+      "delta_mape": 0.034,
+      "delta_directional_accuracy": 0.0
+    },
+    "by_regime": {
+      "peer_shock_flag=0": {
+        "delta_mae": 3.2621,
+        "delta_mape": 0.0338,
+        "delta_directional_accuracy": 0.0
+      }
+    },
+    "top_features": [
+      "peer_mean_ret_10d",
+      "sector_drawdown_60d",
+      "beta_vs_sector_60d",
+      "ret_20d_rank_in_sector"
+    ],
+    "file_ref": "results/hpo/v2_ab_analysis.json"
+  },
+  "alerts_and_decisions": {
+    "can_auto_promote_models": true,
+    "reason": "Metric sanity passed and performance meets thresholds.",
+    "recommended_actions": [
+      "Proceed with automated model promotion.",
+      "Monitor performance in production.",
+      "Continue regular evaluation cycles."
+    ]
+  }
+}

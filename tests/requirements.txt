@@ -1,0 +1,9 @@
+# Minimal dependencies for ModelZoo v2 tests (place at repo root in production)
+numpy
+pandas
+scikit-learn
+pytest
+coverage
+# Optional extras (uncomment as needed)
+# neuralforecast
+# mlflow
