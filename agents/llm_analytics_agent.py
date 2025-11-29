@@ -36,20 +36,17 @@ class LLMAnalyticsExplainerAgent:
         
         # Build prompt
         prompt = self.get_prompt(
-            "drift_analysis",
-            drift_events_json=str(drift_rows) # In real usage, use json.dumps
+            "analytics_summary",
+            performance_summary_json=str(perf_rows)
         )
         
         # Call LLM
         logger.info("Calling LLM for analytics explanation")
-        response = self.llm.chat(prompt)
+        response = self.llm.generate(prompt, temperature=0.1)
         
-        # Parse response (assuming LLM returns JSON-compatible structure)
-        # This is a simplified placeholder
-        data = response.json() if hasattr(response, 'json') else {}
-        
+        # For now, return a simple recommendation since LLM returns text
         return AnalyticsRecommendation(
-            summary_text=data.get("summary_text", "Analysis complete."),
-            actions=data.get("actions", []),
-            notes_for_humans=data.get("notes_for_humans", "")
+            summary_text=response,
+            actions=[],
+            notes_for_humans="LLM analysis completed"
         )

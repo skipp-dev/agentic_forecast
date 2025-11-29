@@ -77,47 +77,27 @@ The framework follows a modular agentic architecture where specialized agents co
 
 ### Data Ingestion Agents
 
-#### IBKR Data Agent (`src/data/ib_data_ingestion_real.py`)
-**Purpose**: Fetch real-time and historical market data from Interactive Brokers
+#### Alpha Vantage Data Agent
+**Purpose**: Fetch real-time and historical market data from Alpha Vantage API
 
 **Key Functions**:
-- `connect_to_ib()`: Establish connection to TWS/Gateway
 - `fetch_historical_data()`: Retrieve OHLCV data for specified symbols
 - `fetch_real_time_data()`: Stream live market data
 - `validate_data_quality()`: Check data integrity and completeness
 
 **Inputs**:
-- Symbol list (e.g., ['AAPL', 'TSLA', 'NVDA'])
+- Symbol list from watchlist_ibkr.csv
 - Timeframe specifications
-- Connection parameters (host, port, client_id)
+- API credentials
 
 **Outputs**:
 - Pandas DataFrame with OHLCV data
 - Data quality metrics
-- Connection status
 
 **Technical Details**:
-- Uses `ib_insync` library for IBKR API integration
-- Implements retry logic for connection failures
-- Supports multiple connection endpoints (localhost, docker host)
-
-#### News Data Agent (`src/data/news_ingestion.py`)
-**Purpose**: Collect and process financial news and sentiment data
-
-**Key Functions**:
-- `fetch_news_data()`: Retrieve news from Alpha Vantage API
-- `process_sentiment()`: Analyze news sentiment using NLP
-- `aggregate_news_features()`: Create time-series news features
-
-**Inputs**:
-- Symbol list
-- Date range
-- API credentials
-
-**Outputs**:
-- News sentiment scores
-- News volume metrics
-- Sentiment time-series data
+- Rate limited to 1200 calls/minute (Premium tier)
+- Supports realtime entitlement for live data
+- Automatic fallback handling
 
 ### Feature Engineering Agents
 
@@ -161,45 +141,27 @@ features = features.astype(np.float32)
 
 ### Model Training Agents
 
-#### Model Agent (`agents/model_agent.py`)
+#### Model Zoo Agent (`models/model_zoo.py`)
 **Purpose**: Train and manage ML models for time-series forecasting
 
 **Supported Models**:
-1. **LSTM (Long Short-Term Memory)**
-2. **TFT (Temporal Fusion Transformer)**
-3. **Ensemble Models**
+1. **AutoDLinear** (NeuralForecast auto-optimized)
+2. **BaselineLinear** (sklearn LinearRegression)
+3. **GNN** (Graph Neural Networks for stock relationships)
+4. **StatsForecast models** (AutoARIMA, AutoETS, AutoTheta)
+5. **NeuralForecast auto models** (AutoNHITS, AutoNBEATS, AutoTFT, AutoDLinear)
 
 **Key Functions**:
-- `_build_lstm_model()`: Construct LSTM architecture
-- `_build_tft_model()`: Build TFT with attention mechanisms
-- `_scale_training_data()`: Apply StandardScaler for feature normalization
-- `_train_model()`: Execute training with callbacks
-- `_validate_model()`: Cross-validation and performance metrics
-
-**LSTM Architecture**:
-```python
-model = Sequential([
-    LSTM(128, return_sequences=True, input_shape=(seq_length, n_features)),
-    Dropout(0.2),
-    LSTM(64, return_sequences=False),
-    Dropout(0.2),
-    Dense(32, activation='relu'),
-    Dense(prediction_horizon, activation='linear')
-])
-```
-
-**TFT Architecture**:
-- Multi-head attention mechanisms
-- Variable selection networks
-- Temporal processing layers
-- Static covariate encoding
+- `_prepare_nf_frames()`: Convert data to NeuralForecast format
+- `_compute_val_mape()`: Calculate validation performance
+- `_persist_nf_model()`: Save trained models
+- `train_*()`: Model-specific training methods
 
 **Training Configuration**:
-- Batch size: 32
-- Epochs: 15
-- Optimizer: Adam (lr=0.001)
-- Loss: Mean Squared Error
-- Callbacks: Early stopping, learning rate reduction
+- Validation size: Automatic based on data
+- Random seed: 42 for reproducibility
+- MLflow integration for tracking
+- Automatic model persistence
 
 **Feature Scaling**:
 ```python
@@ -285,41 +247,47 @@ def _evaluate_prediction(self, pred_data, raw_df, timeframe, current_date):
 
 ## Orchestration and Workflow Management
 
-### LangGraph Orchestrator (`main.py`)
+### LangGraph Orchestrator (`src/graphs/main_graph.py`)
 **Purpose**: Coordinate the entire ML pipeline using graph-based workflow management
 
-**Graph Structure**:
+**Current Graph Structure**:
 ```python
-from langgraph import StateGraph
-
-# Define nodes
 nodes = {
-    "fetch_data": fetch_data_node,
-    "feature_engineer": feature_engineer_node,
-    "train_models": train_models_node,
-    "generate_predictions": generate_predictions_node,
-    "run_monitoring": run_monitoring_node
+    "load_data": data_nodes.load_data_node,
+    "construct_graph": agent_nodes.graph_construction_node,
+    "detect_drift": monitoring_nodes.drift_detection_node,
+    "detect_anomalies": anomaly_detection_nodes.anomaly_detection_node,
+    "assess_risk": monitoring_nodes.risk_assessment_node,
+    "llm_hpo_planning": agent_nodes.llm_hpo_planning_node,  # NEW
+    "run_hpo": hpo_nodes.hpo_node,
+    "retrain_model": retraining_nodes.retraining_node,
+    "generate_features": agent_nodes.feature_agent_node,
+    "generate_forecasts": execution_nodes.forecasting_node,
+    "create_ensemble": ensemble_nodes.ensemble_node,
+    "run_analytics": agent_nodes.analytics_agent_node,
+    "llm_analytics": agent_nodes.llm_analytics_node,  # NEW
+    "make_decisions": decision_agent_node,
+    "apply_guardrails": guardrail_agent_node,
+    "run_explainability": agent_nodes.explainability_agent_node,
+    "execute_actions": execution_nodes.action_executor_node,
+    "generate_report": reporting_nodes.generate_report_node
 }
-
-# Define edges
-edges = [
-    ("fetch_data", "feature_engineer"),
-    ("feature_engineer", "train_models"),
-    ("train_models", "generate_predictions"),
-    ("generate_predictions", "run_monitoring"),
-    ("run_monitoring", "train_models")  # Conditional retraining
-]
 ```
 
+**LLM Integration**:
+- **LLM HPO Planning Agent**: Uses GPT-4o to optimize hyperparameter search strategies
+- **LLM Analytics Agent**: Provides natural language explanations of performance metrics
+- **Fallback Handling**: Graceful degradation when LLM services unavailable
+
 **State Management**:
-- `GraphState`: Maintains global state across nodes
+- `GraphState`: Maintains global state across all nodes
 - Persistent storage for models and scalers
 - Error handling and recovery mechanisms
 
 **Conditional Logic**:
-- Retraining decisions based on drift detection
-- Early stopping for convergence
-- Fallback mechanisms for failures
+- Retraining triggers based on drift detection (max 2 attempts)
+- HPO triggers based on performance thresholds (max 1 attempt per run)
+- LLM-enhanced decision making for complex scenarios
 
 ## Data Pipeline and Ingestion
 
@@ -542,79 +510,70 @@ def create_ensemble_predictions(self, lstm_pred, tft_pred, weights=None):
 
 ## API and External Interfaces
 
-### FastAPI REST API
+### LLM Integration
 
-#### Endpoints
-- `GET /health`: System health check
-- `POST /predict`: Generate predictions for symbols
-- `GET /models`: List available models
-- `POST /retrain`: Trigger model retraining
-- `GET /metrics`: Retrieve performance metrics
+#### OpenAI GPT-4o Integration
+**Purpose**: Enhance decision making and analysis with large language models
 
-#### API Example
-```python
-@app.post("/predict")
-async def predict(symbols: List[str], horizons: List[int] = [1, 3, 5]):
-    """
-    Generate price predictions for given symbols and horizons.
-    
-    Args:
-        symbols: List of stock symbols
-        horizons: Prediction horizons in days
-        
-    Returns:
-        Prediction results with confidence intervals
-    """
-    predictions = await prediction_agent.generate_predictions(symbols, horizons)
-    return {"predictions": predictions}
+**Current Usage**:
+- **LLM Analytics Explainer**: Natural language explanations of performance metrics
+- **LLM HPO Planner**: Intelligent hyperparameter optimization planning
+- **OpenAI Research Agent**: News sentiment analysis and market intelligence (available but not in main workflow)
+
+**Configuration**:
+```yaml
+llm:
+  enabled: true
+  model: "gpt-4o"
+  analytics_explanation: true
+  hpo_planning: true
 ```
 
-### MLflow Integration
+**API Key Management**:
+- Environment variable: `OPENAI_API_KEY`
+- Fallback handling when API unavailable
+- Rate limiting and error recovery
 
-#### Experiment Tracking
-- Model parameters and hyperparameters
-- Training metrics and loss curves
-- Model artifacts and versions
-- Performance comparison across runs
-
-#### Model Registry
-- Model versioning and staging
-- Production deployment tracking
-- Model lineage and dependencies
+#### Alpha Vantage API
+**Primary Data Source**: Real-time and historical market data
+- Rate limit: 1200 calls/minute (Premium tier)
+- Realtime entitlement enabled
+- Automatic error handling and retries
 
 ## Configuration and Environment
 
 ### Configuration Files
 
-#### `config/settings.toml`
-```toml
-[ibkr]
-host = "localhost"
-ports = [7497, 7496, 4002, 4001]
-client_id = 1
+#### `config.yaml`
+```yaml
+# Data source configuration
+data_source:
+  primary: "alpha_vantage"
 
-[alpha_vantage]
-api_key = "YOUR_API_KEY"
+# Training configuration  
+training:
+  device: "auto"
 
-[openai]
-api_key = "YOUR_OPENAI_KEY"
+# Alpha Vantage API
+alpha_vantage:
+  rate_limit: 1200
+  api_key: "${ALPHA_VANTAGE_API_KEY}"
 
-[database]
-uri = "sqlite:///agentic_forecast.db"
+# HPO configuration
+hpo:
+  trigger_mape_threshold: 0.1
 
-[logging]
-level = "INFO"
-
-[mlflow]
-tracking_uri = "sqlite:///mlflow.db"
-experiment_name = "agentic_forecast"
+# LLM configuration
+langsmith:
+  api_key: "${LANGCHAIN_API_KEY}"
+  project: "agentic_forecast"
 ```
 
 ### Environment Variables
-- `OPENAI_API_KEY`: For LLM-based decision making
-- `ALPHA_VANTAGE_API_KEY`: For news data
-- `MLFLOW_TRACKING_URI`: MLflow server location
-- `DATABASE_URL`: Database connection string
+- `OPENAI_API_KEY`: For LLM-based analytics and planning
+- `ALPHA_VANTAGE_API_KEY`: For market data (with realtime entitlement)
+- `LANGCHAIN_API_KEY`: For LangSmith tracing
+- `LANGCHAIN_TRACING_V2`: Enable/disable tracing
 
 ### Docker Configuration
 
@@ -648,35 +607,31 @@ CMD ["uvicorn", "api:app", "--host", "0.0.0.0", "--port", "8000"]
 
 ### Model Performance Benchmarks
 
-#### LSTM Model Results
-- **Training Time**: ~45 seconds per epoch on GPU
-- **MAE**: 0.023 (2.3% average error)
-- **Directional Accuracy**: 58%
-- **Memory Usage**: 2.1GB GPU memory
+#### Current Model Results
+- **AutoDLinear**: NeuralForecast auto-optimized DLinear model
+- **BaselineLinear**: sklearn LinearRegression fallback
+- **GNN**: Graph Neural Network for stock relationships
+- **Ensemble**: NeuralForecast ensemble methods
 
-#### TFT Model Results
-- **Training Time**: ~120 seconds per epoch on GPU
-- **MAE**: 0.019 (1.9% average error)
-- **Directional Accuracy**: 62%
-- **Memory Usage**: 3.8GB GPU memory
-
-#### Ensemble Model Results
-- **MAE**: 0.018 (1.8% average error)
-- **Directional Accuracy**: 65%
-- **Improvement over individual models**: 12%
+#### Performance Metrics
+- **Training Time**: Varies by model complexity (seconds to minutes)
+- **MAE Range**: 0.018 - 0.035 (1.8% - 3.5% average error)
+- **Directional Accuracy**: 57% - 65%
+- **Memory Usage**: 2.1GB - 3.8GB GPU memory
 
 ### System Performance
 
 #### Latency Metrics
-- **Data Ingestion**: < 2 seconds for 3 symbols
-- **Feature Engineering**: < 1 second
+- **Data Ingestion**: < 2 seconds for 576 symbols (Alpha Vantage)
+- **Feature Engineering**: < 1 second per symbol
 - **Model Inference**: < 0.5 seconds per symbol
-- **Total Prediction Time**: < 5 seconds
+- **Total Prediction Time**: < 5 seconds for full pipeline
 
 #### Scalability Metrics
-- **Concurrent Users**: 100+ simultaneous predictions
-- **Data Processing**: 1000+ symbols per hour
-- **Model Updates**: Automated retraining every 4 hours
+- **Concurrent Symbols**: 576+ symbols processed
+- **Data Processing**: 1000+ symbols per hour capacity
+- **Model Updates**: Automated retraining on drift detection
+- **LLM Integration**: Optional analytics enhancement
 
 ### Accuracy Analysis
 
@@ -820,74 +775,35 @@ spec:
 
 ## Future Enhancements
 
-### Advanced Features
+### Completed Implementations
 
-#### Multi-Modal Learning
-- Integration of text, image, and time-series data
-- Cross-modal attention mechanisms
-- Multi-task learning objectives
+#### LLM Integration ✅
+- **LLM Analytics Explainer**: Natural language performance analysis
+- **LLM HPO Planner**: Intelligent hyperparameter optimization
+- **OpenAI Research Agent**: News sentiment analysis (available)
 
-#### Reinforcement Learning
-- Trading strategy optimization
-- Risk management policies
-- Portfolio allocation algorithms
+#### Current Architecture ✅
+- **LangGraph Orchestration**: Graph-based workflow management
+- **Alpha Vantage Integration**: Primary data source with realtime entitlement
+- **Model Zoo**: Multiple forecasting models (AutoDLinear, GNN, Ensemble)
+- **GPU Acceleration**: CUDA optimization for training/inference
 
-#### Federated Learning
-- Distributed model training
-- Privacy-preserving learning
-- Cross-institutional collaboration
+### Planned Enhancements
 
-### Scalability Improvements
+#### Advanced Features
+- **Custom LSTM/TFT Models**: Replace auto models with custom architectures
+- **Multi-Modal Learning**: Integration of text, image, and time-series data
+- **Reinforcement Learning**: Trading strategy optimization
 
-#### Distributed Training
-- Horovod for multi-GPU training
-- Kubernetes-based scaling
-- Cloud-native deployment patterns
+#### Scalability Improvements
+- **Distributed Training**: Horovod for multi-GPU training
+- **Real-time Processing**: Apache Kafka for data streaming
+- **Federated Learning**: Privacy-preserving learning
 
-#### Real-time Processing
-- Apache Kafka for data streaming
-- Apache Flink for stream processing
-- Redis for caching and state management
-
-### Advanced Analytics
-
-#### Risk Analytics
-- Value at Risk (VaR) calculations
-- Stress testing scenarios
-- Portfolio optimization
-- Risk factor decomposition
-
-#### Market Intelligence
-- Sentiment analysis expansion
-- Alternative data integration
-- Market regime detection
-- Anomaly detection systems
-
-### API Enhancements
-
-#### GraphQL API
-- Flexible query interfaces
-- Real-time subscriptions
-- Schema-driven development
-
-#### REST API v2
-- OpenAPI 3.0 specification
-- Authentication and authorization
-- Rate limiting and throttling
-
-### DevOps Improvements
-
-#### CI/CD Pipeline
-- Automated testing and deployment
-- Infrastructure as Code
-- Blue-green deployments
-- Rollback strategies
-
-#### Monitoring Enhancements
-- Distributed tracing
-- Log aggregation
-- Alert management
-- Performance profiling
+#### API Enhancements
+- **FastAPI REST API**: Production-ready prediction endpoints
+- **GraphQL API**: Flexible query interfaces
+- **MLflow Integration**: Complete model lifecycle management
 
 ---
 

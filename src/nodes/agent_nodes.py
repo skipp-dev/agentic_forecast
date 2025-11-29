@@ -233,3 +233,89 @@ def graph_construction_node(state: GraphState) -> GraphState:
     
     logger.info("Constructed stock relationship graph.")
     return state
+
+from ..agents.llm_analytics_agent import LLMAnalyticsExplainerAgent, AnalyticsInput
+
+def llm_analytics_node(state: GraphState) -> GraphState:
+    """
+    Runs the LLM analytics explainer agent to provide natural language insights.
+    """
+    logger.info("--- Node: LLM Analytics Agent ---")
+    
+    try:
+        from src.llm.client import LLMClient
+        llm_client = LLMClient()
+        
+        if not llm_client.client:
+            logger.warning("LLM client not available, skipping LLM analytics")
+            return state
+        
+        agent = LLMAnalyticsExplainerAgent(llm_client)
+        
+        # Prepare input data
+        performance_summary = state.get('analytics_summary', pd.DataFrame()).to_dict('records')
+        drift_events = []  # Could be populated from drift detection results
+        
+        analytics_input = AnalyticsInput(
+            performance_summary=performance_summary,
+            drift_events=drift_events
+        )
+        
+        # Get LLM analysis
+        recommendation = agent.analyze(analytics_input)
+        
+        # Store results
+        state['llm_analytics_summary'] = recommendation.summary_text
+        state['llm_actions'] = recommendation.actions
+        state['llm_notes'] = recommendation.notes_for_humans
+        
+        logger.info("Generated LLM analytics insights.")
+        
+    except Exception as e:
+        logger.error(f"LLM analytics failed: {e}")
+        state['llm_analytics_summary'] = "LLM analysis unavailable"
+    
+    return state
+
+from ..agents.llm_hpo_planner_agent import LLMHPOPlannerAgent, HPOPlanInput, HPORun
+
+def llm_hpo_planning_node(state: GraphState) -> GraphState:
+    """
+    Runs the LLM HPO planner agent to optimize hyperparameter search.
+    """
+    logger.info("--- Node: LLM HPO Planning Agent ---")
+    
+    try:
+        from src.llm.client import LLMClient
+        llm_client = LLMClient()
+        
+        if not llm_client.client:
+            logger.warning("LLM client not available, skipping LLM HPO planning")
+            return state
+        
+        agent = LLMHPOPlannerAgent(llm_client)
+        
+        # Prepare input data
+        past_runs = []  # Could be populated from previous HPO results
+        performance_summary = state.get('analytics_summary', pd.DataFrame()).to_dict('records')
+        
+        plan_input = HPOPlanInput(
+            past_runs=past_runs,
+            performance_summary=performance_summary,
+            total_hpo_budget=100,
+            per_family_min_trials=5,
+            per_family_max_trials=50
+        )
+        
+        # Get HPO plan
+        hpo_plan = agent.plan(plan_input)
+        
+        # Store results
+        state['llm_hpo_plan'] = hpo_plan
+        
+        logger.info("Generated LLM HPO plan.")
+        
+    except Exception as e:
+        logger.error(f"LLM HPO planning failed: {e}")
+    
+    return state

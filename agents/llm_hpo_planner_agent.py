@@ -60,21 +60,10 @@ class LLMHPOPlannerAgent:
         )
         
         logger.info("Generating HPO plan")
-        response = self.llm.chat(prompt)
-        data = response.json() if hasattr(response, 'json') else {}
+        response = self.llm.generate(prompt, temperature=0.2)
         
-        jobs = [
-            HPOJob(
-                model_family=j.get("model_family", "unknown"),
-                priority=j.get("priority", "low"),
-                n_trials=j.get("n_trials", 0),
-                search_space=j.get("search_space", {}),
-                notes=j.get("notes", "")
-            )
-            for j in data.get("jobs", [])
-        ]
-        
+        # For now, return a simple plan since LLM returns text
         return HPOPlan(
-            jobs=jobs,
-            global_notes=data.get("global_notes", "")
+            jobs=[],
+            global_notes=response
         )

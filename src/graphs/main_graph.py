@@ -17,12 +17,27 @@ from ..nodes import (
 def should_continue(state: GraphState) -> str:
     """
     Determines whether to continue with the main workflow or trigger a retraining loop.
+    Includes loop prevention to avoid infinite retraining/HPO cycles.
     """
-    if state.get('hpo_triggered'):
+    # Check for loop prevention - limit retraining/HPO attempts
+    retraining_history = state.get('retraining_history', [])
+    hpo_results = state.get('hpo_results', {})
+
+    max_retraining_attempts = 2  # Allow max 2 retraining cycles per run
+    max_hpo_attempts = 1        # Allow max 1 HPO cycle per run
+
+    retraining_attempts = len(retraining_history)
+    hpo_attempts = len(hpo_results) if hpo_results else 0
+
+    if state.get('hpo_triggered') and hpo_attempts < max_hpo_attempts:
         return "hpo"
-    if state.get('drift_detected'):
+    elif state.get('drift_detected') and retraining_attempts < max_retraining_attempts:
         return "retrain"
-    return "continue"
+    else:
+        # Reset flags to prevent future triggers in this run
+        state['hpo_triggered'] = False
+        state['drift_detected'] = False
+        return "continue"
 
 def create_main_graph(config: dict):
     """
@@ -40,12 +55,14 @@ def create_main_graph(config: dict):
     graph.add_node("detect_drift", monitoring_nodes.drift_detection_node)
     graph.add_node("detect_anomalies", anomaly_detection_nodes.anomaly_detection_node)
     graph.add_node("assess_risk", monitoring_nodes.risk_assessment_node)
+    graph.add_node("llm_hpo_planning", agent_nodes.llm_hpo_planning_node)
     graph.add_node("run_hpo", hpo_nodes.hpo_node)
     graph.add_node("retrain_model", retraining_nodes.retraining_node)
     graph.add_node("generate_features", agent_nodes.feature_agent_node)
     graph.add_node("generate_forecasts", execution_nodes.forecasting_node)
     graph.add_node("create_ensemble", ensemble_nodes.ensemble_node)
     graph.add_node("run_analytics", agent_nodes.analytics_agent_node)
+    graph.add_node("llm_analytics", agent_nodes.llm_analytics_node)
     graph.add_node("make_decisions", decision_agent_node_with_config)
     graph.add_node("apply_guardrails", guardrail_agent_node_with_config)
     graph.add_node("execute_actions", execution_nodes.action_executor_node)
@@ -66,16 +83,19 @@ def create_main_graph(config: dict):
         {
             "continue": "generate_features",
             "retrain": "retrain_model",
-            "hpo": "run_hpo",
+            "hpo": "llm_hpo_planning",
         },
     )
     
+    graph.add_edge("llm_hpo_planning", "run_hpo")
     graph.add_edge("retrain_model", "generate_features") # Continue pipeline after retraining
     graph.add_edge("run_hpo", "generate_features") # Continue pipeline after HPO
 
     graph.add_edge("generate_features", "generate_forecasts")
     graph.add_edge("generate_forecasts", "create_ensemble")
-    graph.add_edge("create_ensemble", "make_decisions")
+    graph.add_edge("create_ensemble", "run_analytics")
+    graph.add_edge("run_analytics", "llm_analytics")
+    graph.add_edge("llm_analytics", "make_decisions")
     graph.add_edge("make_decisions", "apply_guardrails")
     graph.add_edge("apply_guardrails", "run_explainability")
     graph.add_edge("run_explainability", "execute_actions")
