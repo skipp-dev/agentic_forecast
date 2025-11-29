@@ -2,6 +2,7 @@ from ..graphs.state import GraphState
 
 import pandas as pd
 import logging
+import time
 from ..graphs.state import GraphState
 from models.model_zoo import ModelZoo, DataSpec, ModelTrainingResult
 from sklearn.metrics import mean_absolute_percentage_error
@@ -76,9 +77,29 @@ def forecasting_node(state: GraphState) -> GraphState:
         edge_index = torch.tensor(edges, dtype=torch.long).t().contiguous()
         node_features_list = []
         for symbol in symbols:
-            sym_features = state['features'][symbol]['y'].iloc[-horizon:].values
-            node_features_list.append(sym_features)
-        node_features = torch.tensor(node_features_list, dtype=torch.float)
+            if symbol in features:
+                sym_data = features[symbol]
+                # Ensure 'y' column exists (target variable)
+                if 'y' not in sym_data.columns:
+                    # Create target variable if missing
+                    sym_data = sym_data.copy()
+                    sym_data['y'] = sym_data['close'].pct_change(1).shift(-1)
+                    sym_data = sym_data.dropna()
+                
+                if not sym_data.empty and 'y' in sym_data.columns:
+                    sym_features = sym_data['y'].iloc[-horizon:].values
+                    # Pad or truncate to ensure consistent length
+                    if len(sym_features) < horizon:
+                        # Pad with mean value
+                        mean_val = sym_features.mean() if len(sym_features) > 0 else 0.0
+                        padding = [mean_val] * (horizon - len(sym_features))
+                        sym_features = list(sym_features) + padding
+                    elif len(sym_features) > horizon:
+                        # Truncate to horizon
+                        sym_features = sym_features[-horizon:]
+                    node_features_list.append(sym_features)
+        if node_features_list:
+            node_features = torch.tensor(node_features_list, dtype=torch.float)
         state['edge_index'] = edge_index
         state['node_features'] = node_features
         state['symbol_to_idx'] = symbol_to_idx
@@ -149,18 +170,27 @@ def forecasting_node(state: GraphState) -> GraphState:
                         
                         if not sym_data.empty and 'y' in sym_data.columns:
                             sym_features = sym_data['y'].iloc[-horizon:].values
+                            # Pad or truncate to ensure consistent length
+                            if len(sym_features) < horizon:
+                                # Pad with mean value
+                                mean_val = sym_features.mean() if len(sym_features) > 0 else 0.0
+                                padding = [mean_val] * (horizon - len(sym_features))
+                                sym_features = list(sym_features) + padding
+                            elif len(sym_features) > horizon:
+                                # Truncate to horizon
+                                sym_features = sym_features[-horizon:]
                             node_features_list.append(sym_features)
                 if node_features_list:
                     node_features = torch.tensor(node_features_list, dtype=torch.float)
 
             data_spec = DataSpec(
+                job_id=f"forecast_{symbol}_{int(time.time())}",
+                symbol_scope=symbol,
                 train_df=train_df,
                 val_df=val_df,
-                horizon=horizon,
-                symbol=symbol,
-                edge_index=edge_index,
-                node_features=node_features,
-                symbol_to_idx=symbol_to_idx
+                feature_cols=['y'],
+                target_col='y',
+                horizon=horizon
             )
             model_results = _train_all_models(model_zoo, data_spec, edge_index, node_features, symbol_to_idx)
         

@@ -108,6 +108,7 @@ news_api:
 langsmith:
   api_key: "${LANGCHAIN_API_KEY}" # Optional: Your LangSmith API key
   project: "agentic_forecast" # Default project name
+  tracing_enabled: true  # Enable LLM tracing
 
 # --- LLM Configuration ---
 llm:

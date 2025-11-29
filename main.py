@@ -79,14 +79,18 @@ def load_config():
             return yaml.safe_load(f)
     return {}
 
-def load_symbols_from_csv(csv_path="watchlist_ibkr.csv"):
+def load_symbols_from_csv(csv_path="watchlist_ibkr.csv", max_symbols=None):
     """Load symbols from IBKR watchlist CSV file"""
     if os.path.exists(csv_path):
         try:
             df = pd.read_csv(csv_path)
             if 'Symbol' in df.columns:
-                # Process all symbols from the watchlist
-                return df['Symbol'].tolist()
+                # Process symbols from the watchlist
+                all_symbols = df['Symbol'].tolist()
+                if max_symbols is not None and len(all_symbols) > max_symbols:
+                    print(f"Limiting to {max_symbols} symbols for testing (from {len(all_symbols)} total)")
+                    return all_symbols[:max_symbols]
+                return all_symbols
             else:
                 logger.warning(f"'Symbol' column not found in {csv_path}")
                 return []
@@ -102,48 +106,40 @@ def setup_gpu():
     try:
         print("Detecting GPU devices...")
 
-        # List all physical devices
-        gpus = tf.config.list_physical_devices('GPU')
-        cpus = tf.config.list_physical_devices('CPU')
+        # Check TensorFlow GPU support
+        tf_gpus = tf.config.list_physical_devices('GPU')
+        tf_cuda_available = tf.test.is_built_with_cuda()
+        
+        # Check PyTorch GPU support (used by NeuralForecast)
+        torch_cuda_available = False
+        try:
+            import torch
+            torch_cuda_available = torch.cuda.is_available()
+            torch_device_count = torch.cuda.device_count() if torch_cuda_available else 0
+        except ImportError:
+            torch_device_count = 0
 
         print(f"Available devices:")
-        print(f"   GPUs: {len(gpus)}")
-        print(f"   CPUs: {len(cpus)}")
+        print(f"   TensorFlow GPUs: {len(tf_gpus)} (CUDA built-in: {tf_cuda_available})")
+        print(f"   PyTorch GPUs: {torch_device_count} (CUDA available: {torch_cuda_available})")
 
-        if gpus:
-            print(f"   GPU Details: {[gpu.name for gpu in gpus]}")
+        # Use PyTorch GPU detection for NeuralForecast compatibility
+        gpu_available = torch_cuda_available
+        
+        if gpu_available:
+            print(f"   GPU Details: PyTorch detected {torch_device_count} GPU(s)")
+            print("   NeuralForecast models will use GPU acceleration via PyTorch/Ray")
 
-            # Configure each GPU for optimal utilization
-            for i, gpu in enumerate(gpus):
-                try:
-                    # Enable memory growth to prevent TensorFlow from allocating all GPU memory
-                    tf.config.experimental.set_memory_growth(gpu, True)
-                    print(f"   GPU {i}: Memory growth enabled")
+            # Configure TensorFlow if GPUs are available (for any TF components)
+            if tf_gpus:
+                for i, gpu in enumerate(tf_gpus):
+                    try:
+                        tf.config.experimental.set_memory_growth(gpu, True)
+                        print(f"   TensorFlow GPU {i}: Memory growth enabled")
+                    except RuntimeError as e:
+                        print(f"   TensorFlow GPU {i} configuration error: {e}")
 
-                    # Set GPU device visibility
-                    tf.config.set_visible_devices([gpu], 'GPU')
-                    print(f"   GPU {i}: Device visibility set")
-
-                except RuntimeError as e:
-                    print(f"   GPU {i} configuration error: {e}")
-
-            # Enable mixed precision for better GPU utilization (2x-4x speedup)
-            try:
-                tf.keras.mixed_precision.set_global_policy('mixed_float16')
-                print("   Mixed precision training enabled (float16) - 2-4x speedup expected")      
-            except Exception as e:
-                print(f"   Mixed precision setup failed: {e}")
-
-            # Verify GPU is accessible with actual computation
-            try:
-                with tf.device('/GPU:0'):
-                    test_tensor = tf.constant([[1.0, 2.0], [3.0, 4.0]])
-                    result = tf.matmul(test_tensor, test_tensor)
-                    print(f"   GPU computation test passed: {result.shape}")
-            except Exception as e:
-                print(f"   GPU computation test failed: {e}")
-
-            print("GPU setup complete - training will use GPU acceleration!")
+            print("GPU setup complete - NeuralForecast training will use GPU acceleration!")
             return True
 
         else:
@@ -151,8 +147,8 @@ def setup_gpu():
             print("For GPU support:")
             print("   1. Ensure NVIDIA GPU is installed")
             print("   2. Install NVIDIA drivers: https://www.nvidia.com/Download/index.aspx")
-            print("   3. Install NVIDIA Container Toolkit: https://github.com/NVIDIA/nvidia-docker")
-            print("   4. Run with docker-compose: docker-compose up --build")
+            print("   3. Install CUDA Toolkit: https://developer.nvidia.com/cuda-toolkit")
+            print("   4. Install PyTorch with CUDA: pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121")
             print("   See GPU_SETUP_GUIDE.md for detailed instructions")
 
             # Suppress CUDA warnings only when no GPU is available
@@ -169,8 +165,10 @@ def setup_gpu():
 def setup_langsmith(config):
     """Setup LangSmith tracing"""
     langsmith_config = config.get('langsmith', {})
-    tracing_enabled = os.getenv('LANGCHAIN_TRACING_V2', 'false').lower() == 'true'
-
+    llm_config = config.get('llm', {})
+    
+    tracing_enabled = langsmith_config.get('tracing_enabled', False) or llm_config.get('enabled', False)
+    
     if langsmith_config.get('api_key') and tracing_enabled:
         os.environ['LANGCHAIN_TRACING_V2'] = 'true'
         os.environ['LANGCHAIN_API_KEY'] = langsmith_config['api_key']
@@ -220,7 +218,9 @@ def main():
     print(f"\nRunning the agentic workflow with run_type: {args.run_type}...")
     
     # Load symbols from IBKR watchlist CSV
-    symbols = load_symbols_from_csv()
+    # For testing, limit to first 5 symbols to avoid long data loading
+    max_symbols = 5 if args.run_type == "WEEKEND_HPO" else None
+    symbols = load_symbols_from_csv(max_symbols=max_symbols)
     if not symbols:
         print("Error: Could not load symbols from watchlist_ibkr.csv")
         print("   Please ensure the CSV file exists with a 'Symbol' column")

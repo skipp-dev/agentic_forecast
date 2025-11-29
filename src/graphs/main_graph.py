@@ -67,7 +67,7 @@ def create_main_graph(config: dict):
     graph.add_node("make_decisions", decision_agent_node_with_config)
     graph.add_node("apply_guardrails", guardrail_agent_node_with_config)
     graph.add_node("execute_actions", execution_nodes.action_executor_node)
-    graph.add_node("run_explainability", agent_nodes.explainability_agent_node)
+    # graph.add_node("run_explainability", agent_nodes.explainability_agent_node)
     graph.add_node("generate_report", reporting_nodes.generate_report_node)
 
     # Define edges
@@ -99,8 +99,9 @@ def create_main_graph(config: dict):
     graph.add_edge("run_analytics", "llm_analytics")
     graph.add_edge("llm_analytics", "make_decisions")
     graph.add_edge("make_decisions", "apply_guardrails")
-    graph.add_edge("apply_guardrails", "run_explainability")
-    graph.add_edge("run_explainability", "execute_actions")
+    # graph.add_edge("apply_guardrails", "run_explainability")
+    # graph.add_edge("run_explainability", "execute_actions")
+    graph.add_edge("apply_guardrails", "execute_actions")
     graph.add_edge("execute_actions", "generate_report")
     graph.add_edge("generate_report", END)
 

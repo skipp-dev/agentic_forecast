@@ -126,81 +126,81 @@ def guardrail_agent_node(state: GraphState, config: dict) -> GraphState:
     logger.debug(f"Guardrail returning state with keys: {list(state.keys())}")
     return state
 
-from ..agents.explainability_agent import ExplainabilityAgent
+# from ..agents.explainability_agent import ExplainabilityAgent
 from models.model_zoo import ModelZoo
 
-def explainability_agent_node(state: GraphState) -> GraphState:
-    """
-    Runs the explainability agent to generate SHAP values for the best models.
-    """
-    logger.info("--- Node: Explainability Agent ---")
-    logger.debug(f"Explainability node called with state keys: {list(state.keys())}")
-    logger.debug(f"Best models available: {list(state.get('best_models', {}).keys())}")
+# def explainability_agent_node(state: GraphState) -> GraphState:
+#     """
+#     Runs the explainability agent to generate SHAP values for the best models.
+#     """
+#     logger.info("--- Node: Explainability Agent ---")
+#     logger.debug(f"Explainability node called with state keys: {list(state.keys())}")
+#     logger.debug(f"Best models available: {list(state.get('best_models', {}).keys())}")
     
-    try:
-        # Import here to ensure availability
-        from neuralforecast import NeuralForecast
-        from neuralforecast.models import NLinear
-        import numpy as np
+#     try:
+#         # Import here to ensure availability
+#         from neuralforecast import NeuralForecast
+#         from neuralforecast.models import NLinear
+#         import numpy as np
         
-        best_models = state.get('best_models', {})
-        if not best_models:
-            logger.info("No best models selected, skipping explainability.")
-            return state
+#         best_models = state.get('best_models', {})
+#         if not best_models:
+#             logger.info("No best models selected, skipping explainability.")
+#             return state
 
-        model_zoo = ModelZoo()
-        shap_results = {}
+#         model_zoo = ModelZoo()
+#         shap_results = {}
         
-        for symbol, model_info in best_models.items():
-            model_id = model_info.get('model_id')
-            model_family = model_info.get('model_family', 'BaselineLinear')
+#         for symbol, model_info in best_models.items():
+#             model_id = model_info.get('model_id')
+#             model_family = model_info.get('model_family', 'BaselineLinear')
             
-            try:
-                # Get features for this symbol first
-                symbol_features = state['features'][symbol]
+#             try:
+#                 # Get features for this symbol first
+#                 symbol_features = state['features'][symbol]
                 
-                if model_id:
-                    # Load the trained model
-                    nf_model = model_zoo.load_model(model_id)
-                else:
-                    # Create a fallback model for explainability
-                    logger.info(f"No trained model for {symbol}, using fallback for SHAP analysis.")
-                    # For fallback, we'll create a simple sklearn model that can be explained
-                    from sklearn.linear_model import LinearRegression
-                    model = LinearRegression()
+#                 if model_id:
+#                     # Load the trained model
+#                     nf_model = model_zoo.load_model(model_id)
+#                 else:
+#                     # Create a fallback model for explainability
+#                     logger.info(f"No trained model for {symbol}, using fallback for SHAP analysis.")
+#                     # For fallback, we'll create a simple sklearn model that can be explained
+#                     from sklearn.linear_model import LinearRegression
+#                     model = LinearRegression()
                     
-                    # Fit the model on a small sample of the features data
-                    sample_data = symbol_features.head(50).copy()  # Use more data for fitting
-                    sample_data = sample_data.reset_index(drop=True)
-                    sample_data['y'] = np.random.normal(100, 10, len(sample_data))  # Dummy target for fitting
-                    # Use only numeric columns
-                    numeric_cols = symbol_features.select_dtypes(include=[np.number]).columns
-                    model.fit(sample_data[numeric_cols], sample_data['y'])
+#                     # Fit the model on a small sample of the features data
+#                     sample_data = symbol_features.head(50).copy()  # Use more data for fitting
+#                     sample_data = sample_data.reset_index(drop=True)
+#                     sample_data['y'] = np.random.normal(100, 10, len(sample_data))  # Dummy target for fitting
+#                     # Use only numeric columns
+#                     numeric_cols = symbol_features.select_dtypes(include=[np.number]).columns
+#                     model.fit(sample_data[numeric_cols], sample_data['y'])
                     
-                    model_family = 'LinearRegression'
-                    nf_model = model
+#                     model_family = 'LinearRegression'
+#                     nf_model = model
                 
-                # Create explainability agent
-                numeric_cols = symbol_features.select_dtypes(include=[np.number]).columns
-                agent = ExplainabilityAgent(nf_model, model_family, numeric_cols.tolist())
+#                 # Create explainability agent
+#                 numeric_cols = symbol_features.select_dtypes(include=[np.number]).columns
+#                 agent = ExplainabilityAgent(nf_model, model_family, numeric_cols.tolist())
                 
-                # Generate SHAP explanations
-                shap_results[symbol] = agent.explain(symbol_features)
+#                 # Generate SHAP explanations
+#                 shap_results[symbol] = agent.explain(symbol_features)
                 
-            except Exception as e:
-                logger.error(f"Error generating SHAP for {symbol}: {e}")
-                import traceback
-                traceback.print_exc()
-                continue
+#             except Exception as e:
+#                 logger.error(f"Error generating SHAP for {symbol}: {e}")
+#                 import traceback
+#                 traceback.print_exc()
+#                 continue
 
-        state['shap_results'] = shap_results
-        logger.info("Generated SHAP explanations.")
-        return state
-    except Exception as e:
-        logger.error(f"Critical error in explainability node: {e}")
-        import traceback
-        traceback.print_exc()
-        return state
+#         state['shap_results'] = shap_results
+#         logger.info("Generated SHAP explanations.")
+#         return state
+#     except Exception as e:
+#         logger.error(f"Critical error in explainability node: {e}")
+#         import traceback
+#         traceback.print_exc()
+#         return state
 
 from ..agents.graph_construction_agent import GraphConstructionAgent
 
@@ -234,7 +234,7 @@ def graph_construction_node(state: GraphState) -> GraphState:
     logger.info("Constructed stock relationship graph.")
     return state
 
-from ..agents.openai_research_agent import OpenAIResearchAgent
+from agents.openai_research_agent import OpenAIResearchAgent
 
 def news_data_node(state: GraphState) -> GraphState:
     """
@@ -264,7 +264,7 @@ def news_data_node(state: GraphState) -> GraphState:
     
     return state
 
-from ..agents.llm_analytics_agent import LLMAnalyticsExplainerAgent, AnalyticsInput
+from agents.llm_analytics_agent import LLMAnalyticsExplainerAgent, AnalyticsInput
 
 def llm_analytics_node(state: GraphState) -> GraphState:
     """
@@ -307,7 +307,7 @@ def llm_analytics_node(state: GraphState) -> GraphState:
     
     return state
 
-from ..agents.llm_hpo_planner_agent import LLMHPOPlannerAgent, HPOPlanInput, HPORun
+from agents.llm_hpo_planner_agent import LLMHPOPlannerAgent, HPOPlanInput, HPORun
 
 def llm_hpo_planning_node(state: GraphState) -> GraphState:
     """
