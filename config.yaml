@@ -118,6 +118,35 @@ llm:
   hpo_planning: true
   news_analysis: true
 
+# --- LLM Backends Configuration ---
+llm_backends:
+  # Local LM Studio – for cheap, offline work
+  local_lm_studio:
+    provider: lm_studio
+    base_url: "http://127.0.0.1:1234/v1"
+    model: "meta-llama-3.1-8b-instruct"
+
+  # Direct OpenAI – if you want to call OpenAI directly
+  openai_direct:
+    provider: openai
+    model: "gpt-4o"
+
+  # Smith (LangSmith-managed) – using the "Model usage" page config
+  smith_analytics:
+    provider: smith
+    model: "o4-mini"       # matches LangSmith model config
+
+  smith_heavy_research:
+    provider: smith
+    model: "gpt-5-mini"  # matches LangSmith model config
+
+# --- LLM Role Mappings ---
+default_llm_roles:
+  reporting:           smith_analytics
+  analytics_explainer: smith_analytics
+  hpo_planner:         smith_heavy_research
+  news_features:       smith_analytics
+
 # --- Model Preferences ---
 models:
   primary: ["LSTM", "TFT", "AutoDLinear"]

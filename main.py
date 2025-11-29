@@ -164,14 +164,23 @@ def setup_gpu():
 
 def setup_langsmith(config):
     """Setup LangSmith tracing"""
+    from dotenv import load_dotenv
+    import os
+    
+    # Load environment variables from .env file
+    load_dotenv()
+    
     langsmith_config = config.get('langsmith', {})
     llm_config = config.get('llm', {})
     
     tracing_enabled = langsmith_config.get('tracing_enabled', False) or llm_config.get('enabled', False)
     
-    if langsmith_config.get('api_key') and tracing_enabled:
+    # Check for API key in environment variables (try both LANGSMITH_API_KEY and LANGCHAIN_API_KEY)
+    api_key = os.getenv('LANGCHAIN_API_KEY') or os.getenv('LANGSMITH_API_KEY')
+    
+    if api_key and tracing_enabled:
         os.environ['LANGCHAIN_TRACING_V2'] = 'true'
-        os.environ['LANGCHAIN_API_KEY'] = langsmith_config['api_key']
+        os.environ['LANGCHAIN_API_KEY'] = api_key
         os.environ['LANGCHAIN_PROJECT'] = langsmith_config.get('project', 'agentic_forecast')
         print("✅ LangSmith tracing enabled")
     else:
@@ -213,13 +222,17 @@ def main():
     print("Initializing agentic_forecast Agentic Framework...")
     
     config = load_config()
+    
+    # Setup LangSmith tracing
+    setup_langsmith(config)
+    
     app = create_main_graph(config)
     
     print(f"\nRunning the agentic workflow with run_type: {args.run_type}...")
     
     # Load symbols from IBKR watchlist CSV
-    # For testing, limit to first 5 symbols to avoid long data loading
-    max_symbols = 5 if args.run_type == "WEEKEND_HPO" else None
+    # For BACKTEST, limit to first 10 symbols to avoid long data loading
+    max_symbols = 10 if args.run_type == "BACKTEST" else (5 if args.run_type == "WEEKEND_HPO" else None)
     symbols = load_symbols_from_csv(max_symbols=max_symbols)
     if not symbols:
         print("Error: Could not load symbols from watchlist_ibkr.csv")

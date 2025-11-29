@@ -273,12 +273,8 @@ def llm_analytics_node(state: GraphState) -> GraphState:
     logger.info("--- Node: LLM Analytics Agent ---")
     
     try:
-        from src.llm.client import LLMClient
-        llm_client = LLMClient()
-        
-        if not llm_client.client:
-            logger.warning("LLM client not available, skipping LLM analytics")
-            return state
+        from src.llm.llm_factory import create_analytics_explainer_llm
+        llm_client = create_analytics_explainer_llm()
         
         agent = LLMAnalyticsExplainerAgent(llm_client)
         
@@ -316,12 +312,8 @@ def llm_hpo_planning_node(state: GraphState) -> GraphState:
     logger.info("--- Node: LLM HPO Planning Agent ---")
     
     try:
-        from src.llm.client import LLMClient
-        llm_client = LLMClient()
-        
-        if not llm_client.client:
-            logger.warning("LLM client not available, skipping LLM HPO planning")
-            return state
+        from src.llm.llm_factory import create_hpo_planner_llm
+        llm_client = create_hpo_planner_llm()
         
         agent = LLMHPOPlannerAgent(llm_client)
         

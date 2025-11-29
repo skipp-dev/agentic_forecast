@@ -71,7 +71,9 @@ class OpenAIResearchAgent:
         Args:
             openai_api_key: OpenAI API key (optional, will try to load from config)
         """
-        self.llm_client = LLMClient(api_key=openai_api_key, model="gpt-4o")
+        # Use the new LLM factory for role-based LLM selection
+        from src.llm.llm_factory import create_news_features_llm
+        self.llm_client = create_news_features_llm()
 
         # News API configuration (can be extended to multiple sources)
         self.news_api_key = os.getenv("NEWS_API_KEY")  # For NewsAPI.org
@@ -282,10 +284,10 @@ class OpenAIResearchAgent:
                 sentiment_data = self._analyze_article_sentiment(article)
 
                 # Update article with analysis
-                article.sentiment_score = sentiment_data['score']
-                article.sentiment_label = sentiment_data['label']
-                article.key_entities = sentiment_data['entities']
-                article.impact_assessment = sentiment_data['impact']
+                article.sentiment_score = sentiment_data['sentiment_score']
+                article.sentiment_label = sentiment_data['sentiment_label']
+                article.key_entities = sentiment_data['key_entities']
+                article.impact_assessment = sentiment_data['impact_assessment']
 
                 analyzed_articles.append(article)
 
@@ -309,25 +311,30 @@ class OpenAIResearchAgent:
         Content: {article.content}
         Symbol: {', '.join(article.symbols)}
 
-        Please provide a JSON response with:
-        1. sentiment_score: float between -1 (very negative) and 1 (very positive)
-        2. sentiment_label: "very_negative", "negative", "neutral", "positive", "very_positive"
-        3. key_entities: array of important entities mentioned (companies, people, sectors)
-        4. impact_assessment: brief description of potential market impact
-
-        Response format:
+        You must respond with ONLY a valid JSON object in this exact format:
         {{
             "sentiment_score": 0.0,
             "sentiment_label": "neutral",
             "key_entities": ["entity1", "entity2"],
             "impact_assessment": "Brief impact description"
         }}
+
+        Rules:
+        - sentiment_score: float between -1 (very negative) and 1 (very positive)
+        - sentiment_label: must be one of "very_negative", "negative", "neutral", "positive", "very_positive"
+        - key_entities: array of important entities mentioned (companies, people, sectors)
+        - impact_assessment: brief description of potential market impact
+        - Return ONLY the JSON object, no additional text, explanations, or formatting
         """
 
         try:
             response = self.llm_client.generate(prompt, temperature=0.1)
+
+            # Clean the response to extract JSON
+            cleaned_response = self._extract_json_from_response(response.strip())
+
             # Parse JSON response
-            result = json.loads(response.strip())
+            result = json.loads(cleaned_response)
             return result
 
         except Exception as e:
@@ -338,6 +345,32 @@ class OpenAIResearchAgent:
                 "key_entities": [],
                 "impact_assessment": "Analysis failed"
             }
+
+    def _extract_json_from_response(self, response: str) -> str:
+        """
+        Extract JSON from LLM response that might contain extra text or formatting.
+        """
+        import re
+
+        # Remove markdown code blocks if present
+        response = re.sub(r'```json\s*', '', response)
+        response = re.sub(r'```\s*$', '', response)
+
+        # Try to find JSON object in the response
+        json_match = re.search(r'\{.*\}', response, re.DOTALL)
+        if json_match:
+            return json_match.group(0)
+
+        # If no JSON found, try to find anything that looks like JSON
+        # Look for opening brace to closing brace
+        start_idx = response.find('{')
+        end_idx = response.rfind('}')
+
+        if start_idx != -1 and end_idx != -1 and end_idx > start_idx:
+            return response[start_idx:end_idx + 1]
+
+        # If all else fails, return the original response
+        return response
 
     def _generate_market_insights(self, analyzed_articles: List[NewsArticle],
                                 symbols: List[str]) -> Dict[str, Any]:
@@ -352,13 +385,7 @@ class OpenAIResearchAgent:
 
         Target Symbols: {', '.join(symbols)}
 
-        Please analyze and provide:
-        1. Overall market sentiment: "bullish", "bearish", "neutral", or "mixed"
-        2. Risk assessment: Brief description of current market risks
-        3. Trading signals: Array of specific trading recommendations
-        4. Confidence score: Float between 0-1 indicating confidence in analysis
-
-        Format as JSON:
+        You must respond with ONLY a valid JSON object in this exact format:
         {{
             "market_sentiment": "neutral",
             "risk_assessment": "Description of risks",
@@ -367,11 +394,19 @@ class OpenAIResearchAgent:
             ],
             "confidence_score": 0.7
         }}
+
+        Rules:
+        - market_sentiment: must be one of "bullish", "bearish", "neutral", or "mixed"
+        - risk_assessment: brief description of current market risks
+        - trading_signals: array of specific trading recommendations (can be empty array)
+        - confidence_score: float between 0-1 indicating confidence in analysis
+        - Return ONLY the JSON object, no additional text, explanations, or formatting
         """
 
         try:
             response = self.llm_client.generate(prompt, temperature=0.2)
-            insights = json.loads(response.strip())
+            cleaned_response = self._extract_json_from_response(response.strip())
+            insights = json.loads(cleaned_response)
             return insights
 
         except Exception as e:
@@ -802,35 +837,38 @@ class OpenAIResearchAgent:
         - Geopolitical and international factors
         - Sector-specific trends and innovations
 
-        Please provide a comprehensive analysis covering:
-        1. Overall market sentiment across all segments
-        2. Risk assessment considering all market factors
-        3. Specific trading signals and recommendations
-        4. Confidence score in the analysis
-        5. Key market drivers and potential catalysts
-
-        Format as JSON with detailed reasoning:
+        You must respond with ONLY a valid JSON object in this exact format:
         {{
-            "market_sentiment": "bullish/bearish/neutral/mixed",
+            "market_sentiment": "bullish",
             "risk_assessment": "Detailed risk analysis considering all factors",
             "trading_signals": [
                 {{
                     "symbol": "AAPL",
-                    "action": "buy/sell/hold",
+                    "action": "buy",
                     "reason": "Specific reasoning based on news and sentiment",
                     "confidence": 0.8,
-                    "timeframe": "short_term/medium_term/long_term"
+                    "timeframe": "short_term"
                 }}
             ],
             "confidence_score": 0.85,
             "key_drivers": ["List of main market drivers identified"],
             "market_outlook": "Brief market outlook summary"
         }}
+
+        Rules:
+        - market_sentiment: must be one of "bullish", "bearish", "neutral", "mixed"
+        - risk_assessment: detailed risk analysis considering all market factors
+        - trading_signals: array of specific trading recommendations (can be empty array)
+        - confidence_score: float between 0-1 indicating confidence in analysis
+        - key_drivers: array of main market drivers identified
+        - market_outlook: brief market outlook summary
+        - Return ONLY the JSON object, no additional text, explanations, or formatting
         """
 
         try:
             response = self.llm_client.generate(prompt, temperature=0.2, max_tokens=2000)
-            insights = json.loads(response.strip())
+            cleaned_response = self._extract_json_from_response(response.strip())
+            insights = json.loads(cleaned_response)
             return insights
 
         except Exception as e:

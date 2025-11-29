@@ -6,7 +6,7 @@ import openai
 class LLMClient:
     def __init__(self, api_key: Optional[str] = None, model: str = "gpt-4o"):
         self.api_key = api_key or os.getenv("OPENAI_API_KEY")
-        
+
         if not self.api_key:
             # Try to load from config/settings.toml
             try:
@@ -20,8 +20,8 @@ class LLMClient:
                 print(f"Warning: Failed to load OpenAI API key from settings.toml: {e}")
 
         if not self.api_key:
-            # Fallback for development/testing if no key is present, 
-            # but warn heavily or mock if needed. 
+            # Fallback for development/testing if no key is present,
+            # but warn heavily or mock if needed.
             # For now, we'll just print a warning and let the call fail if used.
             print("Warning: OpenAI API key not found. LLM features will fail.")
 
@@ -29,8 +29,14 @@ class LLMClient:
             self.client = openai.OpenAI(api_key=self.api_key)
         else:
             self.client = None
-            
+
         self.model = model
+
+    def complete(self, prompt: str, *, system: Optional[str] = None, **kwargs) -> str:
+        """
+        Complete method compatible with LLMProtocol.
+        """
+        return self.generate(prompt, system_prompt=system, **kwargs)
 
     def generate(self, prompt: str, system_prompt: Optional[str] = None, **kwargs) -> str:
         if not self.client:
