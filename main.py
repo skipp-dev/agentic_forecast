@@ -29,6 +29,47 @@ os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'   # Reduce TensorFlow logging (0=INFO, 
 import asyncio
 import pandas as pd
 import torch
+import argparse
+
+def parse_args():
+    """Parse command line arguments"""
+    parser = argparse.ArgumentParser(description='Agentic Forecast System')
+    parser.add_argument('--task', choices=['full'], default='full',
+                       help='Task to run (default: full)')
+    parser.add_argument('--run_type', choices=['DAILY', 'WEEKEND_HPO', 'BACKTEST'],
+                       default='DAILY', help='Type of run (default: DAILY)')
+    return parser.parse_args()
+
+def build_initial_state(symbols, config, run_type='DAILY'):
+    """Build the initial GraphState with run_type"""
+    return GraphState(
+        symbols=symbols,
+        config=config,
+        run_type=run_type,  # Add run_type to state
+        raw_data={},
+        features={},
+        forecasts={},
+        performance_summary=pd.DataFrame(),
+        drift_metrics=pd.DataFrame(),
+        risk_kpis=pd.DataFrame(),
+        anomalies={},
+        recommended_actions=[],
+        executed_actions=[],
+        retrained_models={},
+        best_models={},
+        errors=[],
+        hpo_results={},
+        shap_results={},
+        analytics_summary=pd.DataFrame(),
+        hpo_decision={},
+        retraining_history=[],
+        guardrail_log=[],
+        hpo_triggered=False,
+        drift_detected=False,
+        edge_index=None,
+        node_features=None,
+        symbol_to_idx={}
+    )
 
 def load_config():
     """Load configuration from config.yaml"""
@@ -59,13 +100,13 @@ def load_symbols_from_csv(csv_path="watchlist_ibkr.csv"):
 def setup_gpu():
     """Setup GPU configuration for optimal utilization in production"""
     try:
-        print("ðŸ” Detecting GPU devices...")
+        print("Detecting GPU devices...")
 
         # List all physical devices
         gpus = tf.config.list_physical_devices('GPU')
         cpus = tf.config.list_physical_devices('CPU')
 
-        print(f"ðŸ“Š Available devices:")
+        print(f"Available devices:")
         print(f"   GPUs: {len(gpus)}")
         print(f"   CPUs: {len(cpus)}")
 
@@ -77,50 +118,50 @@ def setup_gpu():
                 try:
                     # Enable memory growth to prevent TensorFlow from allocating all GPU memory
                     tf.config.experimental.set_memory_growth(gpu, True)
-                    print(f"   âœ… GPU {i}: Memory growth enabled")
+                    print(f"   GPU {i}: Memory growth enabled")
 
                     # Set GPU device visibility
                     tf.config.set_visible_devices([gpu], 'GPU')
-                    print(f"   âœ… GPU {i}: Device visibility set")
+                    print(f"   GPU {i}: Device visibility set")
 
                 except RuntimeError as e:
-                    print(f"   âš ï¸  GPU {i} configuration error: {e}")
+                    print(f"   GPU {i} configuration error: {e}")
 
             # Enable mixed precision for better GPU utilization (2x-4x speedup)
             try:
                 tf.keras.mixed_precision.set_global_policy('mixed_float16')
-                print("   âœ… Mixed precision training enabled (float16) - 2-4x speedup expected")      
+                print("   Mixed precision training enabled (float16) - 2-4x speedup expected")      
             except Exception as e:
-                print(f"   âš ï¸  Mixed precision setup failed: {e}")
+                print(f"   Mixed precision setup failed: {e}")
 
             # Verify GPU is accessible with actual computation
             try:
                 with tf.device('/GPU:0'):
                     test_tensor = tf.constant([[1.0, 2.0], [3.0, 4.0]])
                     result = tf.matmul(test_tensor, test_tensor)
-                    print(f"   âœ… GPU computation test passed: {result.shape}")
+                    print(f"   GPU computation test passed: {result.shape}")
             except Exception as e:
-                print(f"   âš ï¸  GPU computation test failed: {e}")
+                print(f"   GPU computation test failed: {e}")
 
-            print("ðŸŽ‰ GPU setup complete - training will use GPU acceleration!")
+            print("GPU setup complete - training will use GPU acceleration!")
             return True
 
         else:
-            print("âš ï¸  No GPU devices found - training will use CPU")
-            print("ðŸ’¡ For GPU support:")
+            print("No GPU devices found - training will use CPU")
+            print("For GPU support:")
             print("   1. Ensure NVIDIA GPU is installed")
             print("   2. Install NVIDIA drivers: https://www.nvidia.com/Download/index.aspx")
-            print("   3. Install NVIDIA Container Toolkit: https://github.com/NVIDIA/nvidia-docker")    
+            print("   3. Install NVIDIA Container Toolkit: https://github.com/NVIDIA/nvidia-docker")
             print("   4. Run with docker-compose: docker-compose up --build")
-            print("   ðŸ“– See GPU_SETUP_GUIDE.md for detailed instructions")
+            print("   See GPU_SETUP_GUIDE.md for detailed instructions")
 
             # Suppress CUDA warnings only when no GPU is available
             os.environ['CUDA_VISIBLE_DEVICES'] = ''
             return False
 
     except Exception as e:
-        print(f"âŒ GPU setup failed: {e}")
-        print("ðŸ”„ Falling back to CPU training")
+        print(f"GPU setup failed: {e}")
+        print("Falling back to CPU training")
         # Suppress CUDA warnings on error
         os.environ['CUDA_VISIBLE_DEVICES'] = ''
         return False
@@ -145,6 +186,9 @@ from src.graphs.state import GraphState
 def main():
     """Main entry point for the agentic_forecast application"""
 
+    # Parse command line arguments
+    args = parse_args()
+
     # Configure logging to reduce verbosity during evaluation
     logging.basicConfig(
         level=logging.INFO,
@@ -160,7 +204,7 @@ def main():
 
     def signal_handler(signum, frame):
         """Handle graceful shutdown on SIGINT (Ctrl+C)"""
-        print("\n🛑 Received interrupt signal. Shutting down gracefully...")
+        print("\nReceived interrupt signal. Shutting down gracefully...")
         print("Cleaning up connections...")
         # Force exit to avoid IB cleanup issues during shutdown
         sys.exit(0)
@@ -168,49 +212,24 @@ def main():
     # Register signal handler for graceful shutdown
     signal.signal(signal.SIGINT, signal_handler)
 
-    print("🚀 Initializing agentic_forecast Agentic Framework...")
+    print("Initializing agentic_forecast Agentic Framework...")
     
     config = load_config()
     app = create_main_graph(config)
     
-    print("\n📈 Running the agentic workflow...")
+    print(f"\nRunning the agentic workflow with run_type: {args.run_type}...")
     
     # Load symbols from IBKR watchlist CSV
     symbols = load_symbols_from_csv()
     if not symbols:
-        print("❌ Error: Could not load symbols from watchlist_ibkr.csv")
+        print("Error: Could not load symbols from watchlist_ibkr.csv")
         print("   Please ensure the CSV file exists with a 'Symbol' column")
         return
     
-    print(f"📊 Loaded {len(symbols)} symbols from IBKR watchlist for processing")
+    print(f"Loaded {len(symbols)} symbols from IBKR watchlist for processing")
     
-    initial_state = GraphState(
-        symbols=symbols,
-        config=config,
-        raw_data={},
-        features={},
-        forecasts={},
-        performance_summary=pd.DataFrame(),
-        drift_metrics=pd.DataFrame(),
-        risk_kpis=pd.DataFrame(),
-        anomalies={},
-        recommended_actions=[],
-        executed_actions=[],
-        retrained_models={},
-        best_models={},
-        errors=[],
-        hpo_results={},
-        shap_results={},
-        analytics_summary=pd.DataFrame(),
-        hpo_decision={},
-        retraining_history=[],
-        guardrail_log=[],
-        hpo_triggered=False,
-        drift_detected=False,
-        edge_index=None,
-        node_features=None,
-        symbol_to_idx={}
-    )
+    # Build initial state with run_type
+    initial_state = build_initial_state(symbols, config, args.run_type)
     
     for output in app.stream(initial_state):
         for key, value in output.items():

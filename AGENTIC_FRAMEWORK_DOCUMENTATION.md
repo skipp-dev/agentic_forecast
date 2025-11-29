@@ -144,12 +144,15 @@ features = features.astype(np.float32)
 #### Model Zoo Agent (`models/model_zoo.py`)
 **Purpose**: Train and manage ML models for time-series forecasting
 
-**Supported Models**:
-1. **AutoDLinear** (NeuralForecast auto-optimized)
-2. **BaselineLinear** (sklearn LinearRegression)
-3. **GNN** (Graph Neural Networks for stock relationships)
-4. **StatsForecast models** (AutoARIMA, AutoETS, AutoTheta)
-5. **NeuralForecast auto models** (AutoNHITS, AutoNBEATS, AutoTFT, AutoDLinear)
+**Supported Models** (Current Implementation):
+1. **LSTM** (Long Short-Term Memory) - NeuralForecast AutoNHITS
+2. **TFT** (Temporal Fusion Transformer) - NeuralForecast AutoTFT
+3. **AutoDLinear** (NeuralForecast auto-optimized)
+4. **BaselineLinear** (sklearn LinearRegression)
+5. **GNN** (Graph Neural Networks for stock relationships)
+6. **StatsForecast models** (AutoARIMA, AutoETS, AutoTheta)
+
+**Model Priority Order**: LSTM → TFT → AutoDLinear → BaselineLinear
 
 **Key Functions**:
 - `_prepare_nf_frames()`: Convert data to NeuralForecast format
@@ -250,10 +253,11 @@ def _evaluate_prediction(self, pred_data, raw_df, timeframe, current_date):
 ### LangGraph Orchestrator (`src/graphs/main_graph.py`)
 **Purpose**: Coordinate the entire ML pipeline using graph-based workflow management
 
-**Current Graph Structure**:
+**Current Graph Structure** (18 nodes):
 ```python
 nodes = {
     "load_data": data_nodes.load_data_node,
+    "news_data": agent_nodes.news_data_node,  # NEW
     "construct_graph": agent_nodes.graph_construction_node,
     "detect_drift": monitoring_nodes.drift_detection_node,
     "detect_anomalies": anomaly_detection_nodes.anomaly_detection_node,
@@ -518,7 +522,18 @@ def create_ensemble_predictions(self, lstm_pred, tft_pred, weights=None):
 **Current Usage**:
 - **LLM Analytics Explainer**: Natural language explanations of performance metrics
 - **LLM HPO Planner**: Intelligent hyperparameter optimization planning
+- **News Data Agent**: Market intelligence and sentiment analysis (OpenAI Research Agent)
 - **OpenAI Research Agent**: News sentiment analysis and market intelligence (available but not in main workflow)
+
+**Configuration**:
+```yaml
+llm:
+  enabled: true
+  model: "gpt-4o"
+  analytics_explanation: true
+  hpo_planning: true
+  news_analysis: true
+```
 
 **Configuration**:
 ```yaml
@@ -558,6 +573,20 @@ training:
 alpha_vantage:
   rate_limit: 1200
   api_key: "${ALPHA_VANTAGE_API_KEY}"
+
+# LLM configuration
+llm:
+  enabled: true
+  model: "gpt-4o"
+  analytics_explanation: true
+  hpo_planning: true
+  news_analysis: true
+
+# Model preferences
+models:
+  primary: ["LSTM", "TFT", "AutoDLinear"]
+  fallback: ["BaselineLinear"]
+  priority_order: ["LSTM", "TFT", "AutoDLinear", "BaselineLinear"]
 
 # HPO configuration
 hpo:
@@ -608,6 +637,8 @@ CMD ["uvicorn", "api:app", "--host", "0.0.0.0", "--port", "8000"]
 ### Model Performance Benchmarks
 
 #### Current Model Results
+- **LSTM**: Long Short-Term Memory (NeuralForecast AutoNHITS)
+- **TFT**: Temporal Fusion Transformer (NeuralForecast AutoTFT)
 - **AutoDLinear**: NeuralForecast auto-optimized DLinear model
 - **BaselineLinear**: sklearn LinearRegression fallback
 - **GNN**: Graph Neural Network for stock relationships

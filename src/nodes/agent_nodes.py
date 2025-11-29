@@ -234,6 +234,36 @@ def graph_construction_node(state: GraphState) -> GraphState:
     logger.info("Constructed stock relationship graph.")
     return state
 
+from ..agents.openai_research_agent import OpenAIResearchAgent
+
+def news_data_node(state: GraphState) -> GraphState:
+    """
+    Runs the news data agent to gather external market intelligence.
+    """
+    logger.info("--- Node: News Data Agent ---")
+    
+    try:
+        agent = OpenAIResearchAgent()
+        symbols = state.get('symbols', [])
+        
+        # Conduct research for a subset of symbols to avoid API limits
+        research_symbols = symbols[:10]  # Limit to first 10 symbols
+        
+        insights = agent.conduct_market_research(symbols=research_symbols, days_back=7)
+        
+        # Store news insights in state
+        state['news_insights'] = insights
+        state['market_sentiment'] = insights.market_sentiment
+        state['key_news'] = [article.__dict__ for article in insights.key_news]
+        
+        logger.info(f"Gathered news insights for {len(research_symbols)} symbols.")
+        
+    except Exception as e:
+        logger.error(f"News data collection failed: {e}")
+        state['news_insights'] = None
+    
+    return state
+
 from ..agents.llm_analytics_agent import LLMAnalyticsExplainerAgent, AnalyticsInput
 
 def llm_analytics_node(state: GraphState) -> GraphState:

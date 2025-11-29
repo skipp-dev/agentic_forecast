@@ -61,7 +61,7 @@ def forecasting_node(state: GraphState) -> GraphState:
     
     forecasts = {}
     
-    model_zoo = ModelZoo(config=config)
+    model_zoo = ModelZoo()
     
     if 'edge_index' not in state:
         # Construct graph
@@ -305,7 +305,7 @@ def action_executor_node(state: GraphState) -> GraphState:
     logger.info("--- Node: Action Executor ---")
     
     config = state.get('config', {})
-    model_zoo = ModelZoo(config=config)
+    model_zoo = ModelZoo()
     executed_actions = []
     
     for action in state['recommended_actions']:

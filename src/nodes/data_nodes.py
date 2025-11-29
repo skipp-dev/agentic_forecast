@@ -1,134 +1,93 @@
 import os
 import pandas as pd
 import logging
+import asyncio
 from datetime import datetime, timedelta
 from ..graphs.state import GraphState
-from ..data.unified_ingestion_v2 import UnifiedDataIngestion
+from ..alpha_vantage_client import AlphaVantageClient
 
 logger = logging.getLogger(__name__)
 
-def load_data_node(state: GraphState) -> GraphState:
+import os
+import pandas as pd
+import logging
+import asyncio
+from datetime import datetime, timedelta
+from ..graphs.state import GraphState
+from ..alpha_vantage_client import AlphaVantageClient
+
+logger = logging.getLogger(__name__)
+
+def _load_data_sync(state: GraphState) -> GraphState:
     """
-    Loads data using the UnifiedDataIngestion interface.
-    It respects the data source hierarchy defined in the configuration.
+    Loads data using Alpha Vantage only (production-compliant - no synthetic fallback).
+    Follows documented architecture: Alpha Vantage only, no IBKR required.
     """
-    logger.info("--- Node: Load Data ---")
+    logger.info("--- Node: Load Data (Alpha Vantage Only) ---")
 
     symbols = state['symbols']
     config = state.get('config', {})
     raw_data = {}
 
-    # Extract IBKR configuration for market data type, if needed
-    ibkr_config = config.get('ibkr', {})
-    market_data_type = ibkr_config.get('market_data_type', 3)
-
-    # Initialize data ingestion
-    data_ingestion = UnifiedDataIngestion(
-        use_real_data=True, # Always try to use real data as per config
-        market_data_type=market_data_type,
-        config=config,
-        skip_sentiment=True  # Skip news sentiment to avoid rate limiting
-    )
-
+    # PRODUCTION RULE: Alpha Vantage only - no synthetic fallback for production runs
     try:
-        logger.info("Initializing data ingestion system...")
-        data_ingestion.initialize()
-        primary_source = data_ingestion.primary_source
-        logger.info(f"✅ Data ingestion initialized. Primary source: {primary_source.upper()}")
-        
-        # Define the time window for historical data
-        end_date = datetime.now().strftime('%Y-%m-%d')
-        start_date = (datetime.now() - timedelta(days=365*2)).strftime('%Y-%m-%d') # Increased to 2 years for better feature calculation
-
-        logger.info(f"Fetching historical data for {len(symbols)} symbols from {start_date} to {end_date}")
-
-        for symbol in symbols:
-            try:
-                # Fetch historical data with retry logic
-                data = _fetch_with_retry(data_ingestion, symbol, start_date, end_date)
-                if data is not None and not data.empty:
-                    # Validate data structure
-                    if _validate_data_structure(data):
-                        raw_data[symbol] = data
-                        logger.info(f"✅ Loaded data for {symbol} from {primary_source.upper()} ({len(data)} rows).")
-                    else:
-                        error_msg = f"Data validation failed for symbol {symbol}."
-                        state['errors'].append(error_msg)
-                        logger.error(error_msg)
-                else:
-                    error_msg = f"No data returned for symbol {symbol} from {primary_source.upper()}."
-                    state['errors'].append(error_msg)
-                    logger.error(error_msg)
-            except Exception as e:
-                error_msg = f"Error loading data for {symbol}: {e}"
-                state['errors'].append(error_msg)
-                logger.error(error_msg)
-
-    except RuntimeError as e:
-        error_msg = f"FATAL: Could not initialize data source. {e}"
+        data_ingestion = AlphaVantageClient()
+        primary_source = 'alpha_vantage'
+        logger.info("✅ Alpha Vantage client initialized successfully")
+    except ValueError as e:
+        error_msg = f"FATAL: Alpha Vantage initialization failed: {e}"
         logger.error(error_msg)
         state['errors'].append(error_msg)
-        # Fall back to synthetic data generation
-        logger.info("🔄 Falling back to synthetic data generation...")
-        
-        # Force synthetic mode
-        data_ingestion.primary_source = 'synthetic'
-        
-        # Define the time window for historical data
-        end_date = datetime.now().strftime('%Y-%m-%d')
-        start_date = (datetime.now() - timedelta(days=365*2)).strftime('%Y-%m-%d')
+        return state  # Fail hard - no synthetic fallback in production
 
-        logger.info(f"Generating synthetic data for {len(symbols)} symbols from {start_date} to {end_date}")
+    # Define the time window for historical data
+    end_date = datetime.now().strftime('%Y-%m-%d')
+    start_date = (datetime.now() - timedelta(days=365*2)).strftime('%Y-%m-%d') # 2 years for better feature calculation
 
-        for symbol in symbols:
-            try:
-                # Generate synthetic data
-                data = data_ingestion.get_historical_data(
-                    symbol=symbol,
-                    start_date=start_date,
-                    end_date=end_date,
-                    timeframe='1 day'
-                )
-                if data is not None and not data.empty:
+    logger.info(f"Fetching historical data for {len(symbols)} symbols from {start_date} to {end_date}")
+
+    for symbol in symbols:
+        try:
+            # Fetch historical data using Alpha Vantage with retry logic
+            data = None
+            max_retries = 3
+
+            for attempt in range(max_retries):
+                try:
+                    data = data_ingestion.get_daily_data(symbol, outputsize='full')
+                    break  # Success, exit retry loop
+                except Exception as e:
+                    if attempt < max_retries - 1:
+                        logger.warning(f"Attempt {attempt + 1} failed for {symbol}: {e}. Retrying...")
+                        import time
+                        time.sleep(2 ** attempt)  # Exponential backoff
+                    else:
+                        logger.error(f"All {max_retries} attempts failed for {symbol}: {e}")
+                        raise
+
+            if data is not None and not data.empty:
+                # Filter to date range
+                data = data[(data.index >= start_date) & (data.index <= end_date)]
+
+                # Validate data structure
+                if _validate_data_structure(data):
                     raw_data[symbol] = data
-                    logger.info(f"✅ Generated synthetic data for {symbol} ({len(data)} rows).")
+                    logger.info(f"✅ Loaded data for {symbol} from {primary_source.upper()} ({len(data)} rows).")
                 else:
-                    error_msg = f"No synthetic data generated for symbol {symbol}."
+                    error_msg = f"Data validation failed for symbol {symbol}."
                     state['errors'].append(error_msg)
                     logger.error(error_msg)
-            except Exception as e:
-                error_msg = f"Error generating synthetic data for {symbol}: {e}"
+            else:
+                error_msg = f"No data returned for symbol {symbol} from {primary_source.upper()}."
                 state['errors'].append(error_msg)
                 logger.error(error_msg)
-
-    finally:
-        # Ensure proper cleanup of any open connections
-        try:
-            data_ingestion.disconnect()
         except Exception as e:
-            logger.warning(f"Warning: Error during connection cleanup: {e}")
+            error_msg = f"Error loading data for {symbol}: {e}"
+            state['errors'].append(error_msg)
+            logger.error(error_msg)
 
     state['raw_data'] = raw_data
     return state
-
-def _fetch_with_retry(data_ingestion, symbol, start_date, end_date, max_retries=3):
-    """Fetch data with retry logic for transient failures."""
-    for attempt in range(max_retries):
-        try:
-            return data_ingestion.get_historical_data(
-                symbol=symbol,
-                start_date=start_date,
-                end_date=end_date,
-                timeframe='1 day'
-            )
-        except Exception as e:
-            if attempt < max_retries - 1:
-                logger.warning(f"Attempt {attempt + 1} failed for {symbol}: {e}. Retrying...")
-                import time
-                time.sleep(2 ** attempt)  # Exponential backoff
-            else:
-                logger.error(f"All {max_retries} attempts failed for {symbol}: {e}")
-                raise
 
 def _validate_data_structure(data):
     """Validate that the data has required columns and structure."""
@@ -144,3 +103,9 @@ def _validate_data_structure(data):
         logger.error(f"Missing required columns: {missing_columns}")
         return False
     return True
+
+def load_data_node(state: GraphState) -> GraphState:
+    """
+    Synchronous wrapper for the data loading function.
+    """
+    return _load_data_sync(state)

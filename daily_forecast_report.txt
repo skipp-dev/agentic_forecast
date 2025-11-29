@@ -1,0 +1,4 @@
+Daily Forecast Report
+==================================================
+AAPL: Predicted close = $279.13
+MSFT: Predicted close = $492.50

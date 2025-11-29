@@ -437,12 +437,17 @@ class PredictionEvaluator:
             # Best performing models
             f.write("\n\nBest Performing Models (by Directional Accuracy):\n")
             f.write("-" * 50 + "\n")
-            best_models = results_df.nlargest(10, 'directional_accuracy')[
-                ['symbol', 'model_type', 'target_horizon', 'directional_accuracy', 'mae']
-            ]
-            for _, model in best_models.iterrows():
-                f.write(f"{model['symbol']} {model['model_type']} {model['target_horizon']}d: "
-                       f"DA={model['directional_accuracy']:.3f}, MAE={model['mae']:.4f}\n")
+            # Filter out rows with NaN directional_accuracy and get top 10
+            valid_results = results_df.dropna(subset=['directional_accuracy'])
+            if not valid_results.empty:
+                best_models = valid_results.nlargest(10, 'directional_accuracy')[
+                    ['symbol', 'model_type', 'target_horizon', 'directional_accuracy', 'mae']
+                ]
+                for _, model in best_models.iterrows():
+                    f.write(f"{model['symbol']} {model['model_type']} {model['target_horizon']}d: "
+                           f"DA={model['directional_accuracy']:.3f}, MAE={model['mae']:.4f}\n")
+            else:
+                f.write("No valid directional accuracy scores found.\n")
 
         logger.info(f"Generated summary report: {report_path}")
 

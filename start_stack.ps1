@@ -53,7 +53,8 @@ Write-Host ""
 # 1) Start Prometheus in a new PowerShell window
 if (Test-Path $PrometheusExe) {
     Write-Host "[1/3] Starting Prometheus..." -ForegroundColor Yellow
-    $promCmd = "`"$PrometheusExe`" --config.file=`"$PrometheusConf`""
+    $promDataDir = Join-Path $ProjectRoot "monitoring\data"
+    $promCmd = "cd '$ProjectRoot'; `"$PrometheusExe`" --config.file=`"$PrometheusConf`" --storage.tsdb.path=`"$promDataDir`" --web.listen-address=`":9090`""
     Start-Process powershell -ArgumentList "-NoExit", "-Command", $promCmd -WindowStyle Minimized
 } else {
     Write-Host "[1/3] Skipping Prometheus – executable not found at $PrometheusExe" -ForegroundColor DarkYellow

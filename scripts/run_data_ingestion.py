@@ -17,7 +17,7 @@ import pandas as pd
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from src.graphs.state import GraphState
-from src.data.unified_ingestion_v2 import UnifiedDataIngestion
+from src.alpha_vantage_client import AlphaVantageClient
 
 def setup_logging(log_level=logging.INFO):
     """Setup logging configuration"""
@@ -120,35 +120,28 @@ def run_data_ingestion(symbols=None, start_date=None, end_date=None, config=None
         symbol_to_idx={}
     )
 
-    # Extract IBKR configuration
-    ibkr_config = config.get('ibkr', {})
-    market_data_type = ibkr_config.get('market_data_type', 3)
-
-    # Initialize data ingestion
-    data_ingestion = UnifiedDataIngestion(
-        use_real_data=True,
-        market_data_type=market_data_type,
-        config=config,
-        skip_sentiment=skip_sentiment
-    )
+    # PRODUCTION RULE: Use Alpha Vantage only - no synthetic fallback for production runs
+    try:
+        data_ingestion = AlphaVantageClient()
+        primary_source = 'alpha_vantage'
+        logger.info("✅ Alpha Vantage client initialized successfully")
+    except ValueError as e:
+        error_msg = f"FATAL: Alpha Vantage initialization failed: {e}"
+        logger.error(error_msg)
+        state['errors'].append(error_msg)
+        return state  # Fail hard - no synthetic fallback in production
 
     try:
-        logger.info("Initializing data ingestion system...")
-        data_ingestion.initialize()
-        primary_source = data_ingestion.primary_source
-        logger.info(f"Data ingestion initialized. Primary source: {primary_source.upper()}")
+        logger.info("Starting data ingestion with Alpha Vantage...")
 
         for symbol in symbols:
             try:
                 logger.info(f"Fetching data for {symbol}")
-                data = data_ingestion.get_historical_data(
-                    symbol=symbol,
-                    start_date=start_date,
-                    end_date=end_date,
-                    timeframe='1 day'
-                )
+                data = data_ingestion.get_daily_data(symbol, outputsize='full')
 
                 if data is not None and not data.empty:
+                    # Filter to date range
+                    data = data[(data.index >= start_date) & (data.index <= end_date)]
                     state['raw_data'][symbol] = data
                     logger.info(f"Loaded {len(data)} rows for {symbol}")
                 else:
@@ -161,44 +154,10 @@ def run_data_ingestion(symbols=None, start_date=None, end_date=None, config=None
                 state['errors'].append(error_msg)
                 logger.error(error_msg)
 
-    except RuntimeError as e:
-        error_msg = f"FATAL: Could not initialize data source. {e}"
+    except Exception as e:
+        error_msg = f"FATAL: Data ingestion failed: {e}"
         logger.error(error_msg)
         state['errors'].append(error_msg)
-
-        # Fallback to synthetic data
-        logger.info("Falling back to synthetic data generation...")
-        data_ingestion.primary_source = 'synthetic'
-
-        for symbol in symbols:
-            try:
-                logger.info(f"Generating synthetic data for {symbol}")
-                data = data_ingestion.get_historical_data(
-                    symbol=symbol,
-                    start_date=start_date,
-                    end_date=end_date,
-                    timeframe='1 day'
-                )
-
-                if data is not None and not data.empty:
-                    state['raw_data'][symbol] = data
-                    logger.info(f"Generated {len(data)} rows for {symbol}")
-                else:
-                    error_msg = f"No synthetic data generated for {symbol}"
-                    state['errors'].append(error_msg)
-                    logger.error(error_msg)
-
-            except Exception as e:
-                error_msg = f"Error generating synthetic data for {symbol}: {e}"
-                state['errors'].append(error_msg)
-                logger.error(error_msg)
-
-    finally:
-        try:
-            data_ingestion.disconnect()
-            logger.info("Data ingestion connections cleaned up")
-        except Exception as e:
-            logger.warning(f"Error during connection cleanup: {e}")
 
     # Summary
     successful_symbols = len(state['raw_data'])

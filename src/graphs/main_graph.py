@@ -51,6 +51,7 @@ def create_main_graph(config: dict):
 
     # Add nodes
     graph.add_node("load_data", data_nodes.load_data_node)
+    graph.add_node("news_data", agent_nodes.news_data_node)
     graph.add_node("construct_graph", agent_nodes.graph_construction_node)
     graph.add_node("detect_drift", monitoring_nodes.drift_detection_node)
     graph.add_node("detect_anomalies", anomaly_detection_nodes.anomaly_detection_node)
@@ -71,7 +72,8 @@ def create_main_graph(config: dict):
 
     # Define edges
     graph.set_entry_point("load_data")
-    graph.add_edge("load_data", "construct_graph")
+    graph.add_edge("load_data", "news_data")
+    graph.add_edge("news_data", "construct_graph")
     graph.add_edge("construct_graph", "detect_drift")
     graph.add_edge("detect_drift", "detect_anomalies")
     graph.add_edge("detect_anomalies", "assess_risk")

@@ -1,0 +1,125 @@
+# Configuration for the Agentic Forecasting Framework
+
+# --- Data Source Configuration ---
+data_source:
+  # Primary data source to use.
+  # Options: "alpha_vantage", "ibkr"
+  # If the primary source fails, the framework will attempt to use the other as a fallback.  
+  primary: "alpha_vantage"# --- Training Configuration ---
+training:
+  # Device to use for model training.
+  # Options: "auto", "cuda", "cpu"
+  # "cuda" forces GPU training, will error if GPU is not available.
+  # "auto" will use GPU if available, otherwise CPU
+  device: "auto"
+
+# --- IBKR Data Configuration ---
+ibkr:
+  # IB TWS/Gateway connection settings
+  host: "127.0.0.1"
+  port: 7497  # TWS API port (7496=paper, 7497=live)
+  client_id: 1
+  # Market data type to request from IBKR TWS/Gateway.
+  # 1: Real-time (requires subscription)
+  # 2: Frozen
+  # 3: Delayed (default, no subscription required)
+  # 4: Delayed frozen
+  market_data_type: 3
+
+# --- Symbols Configuration ---
+# Symbols are automatically loaded from watchlist_ibkr.csv
+# No manual configuration needed - all symbols from CSV will be processed
+
+# --- Scaling Configuration ---
+scaling:
+  # Maximum number of symbols to process in a single run
+  max_symbols: -1  # Set to -1 for unlimited (ALL symbols)
+
+  # Batch processing settings - Maximum throughput
+  batch_size: 100  # Maximum symbols per batch
+  batch_delay: 5   # Minimum delay between batches
+
+  # Parallel processing - Maximum concurrency
+  max_workers: 32  # Maximum concurrent workers
+
+  # Memory management - Maximum memory allocation
+  max_memory_gb: 64  # Maximum memory usage before cleanup
+
+# --- Alpha Vantage Configuration ---
+alpha_vantage:
+  # API call rate limit (calls per minute) - Premium tier
+  rate_limit: 1200
+  # Your Alpha Vantage API key (get from https://www.alphavantage.co/support/#api-key)
+  api_key: "${ALPHA_VANTAGE_API_KEY}"
+
+
+# --- Financial Modeling Prep (FMP) Configuration ---
+fmp:
+  # Your FMP API key (get from https://financialmodelingprep.com/developer/docs)
+  api_key: "${FMP_API_KEY}"
+  # API call rate limit (calls per minute)
+  rate_limit: 300
+
+# --- CoinGecko Configuration ---
+coingecko:
+  # Your CoinGecko API key (optional, free tier works without key)
+  # Get from https://www.coingecko.com/en/api
+  api_key: "${COINGECKO_API_KEY}"
+  # API call rate limit (calls per minute) - Free tier
+  rate_limit: 10
+
+# --- Frankfurter FX Configuration ---
+frankfurter:
+  # Frankfurter is completely free, no API key required
+  # Currency data API - https://frankfurter.dev
+  # Source: https://github.com/lineofflight/frankfurter
+  name: "Frankfurter"
+  description: "Currency data API"
+  versions:
+    v1: "/v1"
+  docs: "https://frankfurter.dev"
+  source: "https://github.com/lineofflight/frankfurter"
+  api_key: ""  # No API key required - service is free
+  # API call rate limit (calls per minute)
+  rate_limit: 1000
+
+# --- HPO Agent Configuration ---
+hpo:
+  # MAPE threshold to trigger a new HPO run. 
+  # If any symbol's best model performs worse than this, HPO will be triggered.
+  trigger_mape_threshold: 0.1
+
+# --- Anomaly Detection Configuration ---
+anomaly_detection:
+  # Number of anomalies required to block a model promotion.
+  anomaly_threshold: 5
+
+# --- News API Configuration ---
+news_api:
+  # To enable news sentiment analysis, provide your NewsAPI key here or as an environment variable.
+  # You can get a free key from https://newsapi.org/
+  api_key: "${NEWS_API_KEY}" # Optional: Your NewsAPI key
+  rate_limit: 1 # FREE TIER: 100 requests per 24 hours total (not per minute!)
+  max_articles: 5 # Reduced for free tier
+
+# --- LangSmith Configuration ---
+# To enable tracing, set the LANGCHAIN_TRACING_V2 environment variable to "true"
+# and provide your API key here or as an environment variable.
+langsmith:
+  api_key: "${LANGCHAIN_API_KEY}" # Optional: Your LangSmith API key
+  project: "agentic_forecast" # Default project name
+
+# --- LLM Configuration ---
+llm:
+  enabled: true
+  model: "gpt-4o"
+  analytics_explanation: true
+  hpo_planning: true
+  news_analysis: true
+
+# --- Model Preferences ---
+models:
+  primary: ["LSTM", "TFT", "AutoDLinear"]
+  fallback: ["BaselineLinear"]
+  priority_order: ["LSTM", "TFT", "AutoDLinear", "BaselineLinear"]
+
