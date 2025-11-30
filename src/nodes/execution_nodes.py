@@ -209,7 +209,7 @@ def forecasting_node(state: GraphState) -> GraphState:
         
         for model_name, model_result in model_results.items():
             if model_result:
-                model_path = model_result.artifact_info.local_path
+                model_path = model_result.artifact_path
                 if model_result.model_family == "GNN":
                     # Load GNN model
                     if state.get('node_features') is not None:
