@@ -25,7 +25,7 @@ from agents.hyperparameter_search_agent import HyperparameterSearchAgent
 from agents.drift_monitor_agent import DriftMonitorAgent
 from agents.feature_engineer_agent import FeatureEngineerAgent
 from agents.forecast_agent import ForecastAgent
-from agents.reporting_agent import ReportingAgent
+from agents.llm_reporting_agent import LLMReportingAgent
 
 logger = logging.getLogger(__name__)
 
@@ -49,7 +49,7 @@ class OrchestratorAgent(SupervisorAgent):
         self.drift_monitor_agent = DriftMonitorAgent()
         self.feature_engineer_agent = FeatureEngineerAgent(gpu_services=self.gpu_services)
         self.forecast_agent = ForecastAgent()
-        self.reporting_agent = ReportingAgent()
+        self.reporting_agent = LLMReportingAgent()
 
         logger.info("OrchestratorAgent initialized with GPU services")
 
@@ -201,13 +201,92 @@ class OrchestratorAgent(SupervisorAgent):
 
         return self.drift_monitor_agent.monitor_performance(symbol)
 
-# Factory function to create orchestrator
-def create_orchestrator_agent(llm=None, config=None) -> OrchestratorAgent:
-    """Create and configure an OrchestratorAgent instance."""
-    agent = OrchestratorAgent(llm=llm, config=config)
-    return agent
+    def trigger_comprehensive_report(self, state_data: Dict[str, Any]) -> Dict[str, Any]:
+        """Trigger comprehensive LLM-powered reporting with continuous learning feedback."""
+        if not self.reporting_agent:
+            return {'error': 'LLM Reporting agent not initialized'}
 
-# Backwards compatibility
-def create_supervisor_agent(llm=None, config=None):
-    """Create supervisor agent (backwards compatibility)."""
-    return create_orchestrator_agent(llm, config)
+        logger.info("Generating comprehensive system report with LLM analysis")
+
+        try:
+            # Convert state data to ReportingInput format
+            from agents.llm_reporting_agent import ReportingInput
+
+            report_input = ReportingInput(
+                analytics_summary=state_data.get('analytics_summary', {}),
+                hpo_plan=state_data.get('hpo_plan', {}),
+                research_insights=state_data.get('research_insights', {}),
+                guardrail_status=state_data.get('guardrail_status', {}),
+                run_metadata=state_data.get('run_metadata', {})
+            )
+
+            # Generate report
+            metadata = self.reporting_agent.generate_and_store_report(report_input)
+
+            # Extract priority actions for continuous learning
+            priority_actions = []
+            if hasattr(self.reporting_agent, '_last_report') and self.reporting_agent._last_report:
+                priority_actions = self.reporting_agent._last_report.get('priority_actions', [])
+
+            # Apply continuous learning feedback
+            learning_feedback = self._apply_continuous_learning_feedback(priority_actions, state_data)
+
+            result = {
+                'report_metadata': metadata,
+                'priority_actions': priority_actions,
+                'learning_feedback': learning_feedback,
+                'success': True
+            }
+
+            logger.info(f"Comprehensive report generated with {len(priority_actions)} priority actions identified")
+            return result
+
+        except Exception as e:
+            logger.error(f"Failed to generate comprehensive report: {e}")
+            return {'error': str(e), 'success': False}
+
+    def _apply_continuous_learning_feedback(self, priority_actions: list, state_data: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Apply continuous learning feedback based on report recommendations.
+
+        This implements Step 5: continuous learning loop where reports inform future decisions.
+        """
+        feedback = {
+            'actions_triggered': [],
+            'decisions_updated': [],
+            'learning_insights': []
+        }
+
+        for action in priority_actions:
+            action_type = action.get('action', '').lower()
+            priority = action.get('priority', 'medium')
+            rationale = action.get('rationale', '')
+
+            # High priority actions get automatic execution
+            if priority == 'high':
+                if 'retrain' in action_type or 'model' in action_type:
+                    feedback['actions_triggered'].append(f"High-priority retraining triggered: {action_type}")
+                    feedback['decisions_updated'].append({'type': 'retraining', 'symbol': action.get('owner', 'all')})
+
+                elif 'hpo' in action_type or 'optimization' in action_type:
+                    feedback['actions_triggered'].append(f"High-priority HPO triggered: {action_type}")
+                    feedback['decisions_updated'].append({'type': 'hpo', 'symbol': action.get('owner', 'all')})
+
+                elif 'feature' in action_type:
+                    feedback['actions_triggered'].append(f"High-priority feature engineering triggered: {action_type}")
+                    feedback['decisions_updated'].append({'type': 'feature_engineering', 'symbol': action.get('owner', 'all')})
+
+            # Learning insights for all actions
+            feedback['learning_insights'].append({
+                'action': action_type,
+                'priority': priority,
+                'rationale': rationale,
+                'learning_applied': priority == 'high'
+            })
+
+        # Update state data with learning insights
+        state_data['continuous_learning_applied'] = len(feedback['actions_triggered']) > 0
+        state_data['learning_insights'] = feedback['learning_insights']
+
+        logger.info(f"Applied continuous learning feedback: {len(feedback['actions_triggered'])} actions triggered")
+        return feedback

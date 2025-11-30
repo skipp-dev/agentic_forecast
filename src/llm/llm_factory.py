@@ -1,183 +1,262 @@
-"""
-Unified LLM Factory for Role-Based LLM Creation
-
-This factory provides a clean interface for creating LLM clients based on
-logical roles (analytics_explainer, hpo_planner, etc.) rather than specific
-providers. It reads from the config to determine which backend to use for
-each role.
-"""
-
-import os
+# src/llm/llm_factory.py
 import yaml
-from typing import Optional, Protocol, Dict, Any
-from dataclasses import dataclass
 from pathlib import Path
+from functools import lru_cache
+from typing import Any, Dict
+import logging
+import time
+from collections import defaultdict
+
+from src.llm.openai_client import OpenAILLMClient
+
+logger = logging.getLogger(__name__)
+
+# Load environment variables
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
 
 
-@dataclass
-class LLMConfig:
-    """Configuration for an LLM backend."""
-    provider: str         # "lm_studio" | "openai" | "smith"
-    model: str            # model ID or alias
-    base_url: Optional[str] = None
-    api_key_env: Optional[str] = None
+# LLM Usage Monitoring
+_llm_usage_stats = defaultdict(lambda: {
+    'calls': 0,
+    'total_tokens': 0,
+    'total_cost': 0.0,
+    'last_used': None,
+    'errors': 0
+})
 
 
-class LLMProtocol(Protocol):
-    """Protocol that all LLM clients must implement."""
-    def complete(self, prompt: str, *, system: Optional[str] = None, **kwargs) -> str: ...
-    def generate(self, prompt: str, system_prompt: Optional[str] = None, **kwargs) -> str: ...
-
-
-def load_config() -> Dict[str, Any]:
-    """Load the main configuration from config.yaml."""
-    config_path = Path(__file__).parent.parent.parent / "config.yaml"
-    if config_path.exists():
-        with open(config_path, 'r') as f:
-            return yaml.safe_load(f)
-    return {}
-
-
-def get_llm_backend(name: str) -> LLMConfig:
+def get_llm_usage_stats():
     """
-    Read backend configuration from settings.
-
-    Args:
-        name: The backend name (e.g., "smith_analytics", "openai_direct")
-
-    Returns:
-        LLMConfig for the specified backend
+    Get current LLM usage statistics across all roles.
     """
-    config = load_config()
-    llm_backends = config.get("llm_backends", {})
-
-    if name not in llm_backends:
-        raise ValueError(f"LLM backend '{name}' not found in configuration")
-
-    backend_config = llm_backends[name]
-    return LLMConfig(
-        provider=backend_config["provider"],
-        model=backend_config["model"],
-        base_url=backend_config.get("base_url"),
-        api_key_env=backend_config.get("api_key_env")
-    )
+    return dict(_llm_usage_stats)
 
 
-def create_llm_for_role(role: str) -> LLMProtocol:
+def reset_llm_usage_stats():
     """
-    Return an LLM client for a given logical role using config-driven backend selection.
-
-    Args:
-        role: Logical role name (e.g., "analytics_explainer", "hpo_planner")
-
-    Returns:
-        LLM client implementing the LLMProtocol
+    Reset LLM usage statistics.
     """
-    config = load_config()
-    default_roles = config.get("default_llm_roles", {})
+    global _llm_usage_stats
+    _llm_usage_stats = defaultdict(lambda: {
+        'calls': 0,
+        'total_tokens': 0,
+        'total_cost': 0.0,
+        'last_used': None,
+        'errors': 0
+    })
 
-    if role not in default_roles:
-        raise ValueError(f"LLM role '{role}' not found in configuration")
 
-    backend_name = default_roles[role]
-    cfg = get_llm_backend(backend_name)
+def _record_llm_usage(role_name: str, tokens: int = 0, cost: float = 0.0, error: bool = False):
+    """
+    Record LLM usage for monitoring.
+    """
+    stats = _llm_usage_stats[role_name]
+    stats['calls'] += 1
+    stats['total_tokens'] += tokens
+    stats['total_cost'] += cost
+    stats['last_used'] = time.time()
+    if error:
+        stats['errors'] += 1
 
-    if cfg.provider == "lm_studio":
-        # Import here to avoid circular imports
-        try:
-            from .local_client import LocalLlamaClient
-        except ImportError:
-            # Fallback for different import paths
-            import sys
-            sys.path.append(str(Path(__file__).parent))
-            from local_client import LocalLlamaClient
-
-        if not cfg.base_url:
-            raise ValueError(f"base_url required for LM Studio backend '{backend_name}'")
-
-        return LocalLlamaClient(base_url=cfg.base_url, model=cfg.model)
-
-    elif cfg.provider == "openai":
-        # Use the existing LLMClient for OpenAI
-        from .client import LLMClient
-        return LLMClient(model=cfg.model)
-
-    elif cfg.provider == "smith":
-        # Use the new Smith LLM client
-        from .smith_client import SmithLLMClient
-        return SmithLLMClient(model=cfg.model)
-
+    # Log usage for monitoring
+    if error:
+        logger.warning(f"LLM usage - Role: {role_name}, Error recorded")
     else:
-        raise ValueError(f"Unknown LLM provider: {cfg.provider}")
+        logger.debug(f"LLM usage - Role: {role_name}, Tokens: {tokens}, Cost: ${cost:.4f}")
 
 
-# Convenience functions for specific roles
-def create_analytics_explainer_llm() -> LLMProtocol:
-    """Create LLM for analytics explanation tasks."""
+@lru_cache(maxsize=1)
+def _load_config() -> Dict[str, Any]:
+    cfg_path = Path(__file__).parent.parent.parent / "config.yaml"
+    data = yaml.safe_load(cfg_path.read_text(encoding="utf-8"))
+    return data or {}
+
+
+def _get_llm_backend_config(backend_name: str) -> Dict[str, Any]:
+    cfg = _load_config()
+    llm_cfg = cfg.get("llm", {})
+    backends = llm_cfg.get("backends", {})
+    if backend_name not in backends:
+        raise ValueError(f"Unknown LLM backend: {backend_name}")
+    return backends[backend_name]
+
+
+def _get_backend_for_role(role_name: str) -> Dict[str, Any]:
+    cfg = _load_config()
+    llm_cfg = cfg.get("llm", {})
+    roles = llm_cfg.get("default_llm_roles", {})
+    role_cfg = roles.get(role_name)
+    if role_cfg is None:
+        raise ValueError(f"No LLM role configured for: {role_name}")
+    backend_name = role_cfg["backend"]
+    return _get_llm_backend_config(backend_name)
+
+
+def create_llm_for_role(role_name: str):
+    """
+    Factory: given a logical role (analytics_explainer, hpo_planner, …),
+    return an LLM client instance.
+    """
+    backend_cfg = _get_backend_for_role(role_name)
+    provider = backend_cfg["provider"]
+
+    if provider == "openai":
+        model = backend_cfg["model"]
+        base_url = backend_cfg.get("base_url")
+        client = OpenAILLMClient(model=model, base_url=base_url)
+        # Wrap the client to add usage tracking
+        return _TrackedLLMClient(client, role_name)
+
+    # You can add "smith", "local", etc. later
+    raise ValueError(f"Unsupported LLM provider: {provider}")
+
+
+class _TrackedLLMClient:
+    """
+    Wrapper around LLM clients to add usage tracking.
+    """
+
+    def __init__(self, client, role_name: str):
+        self._client = client
+        self._role_name = role_name
+
+    def complete(self, *args, **kwargs):
+        """
+        Track usage for completion calls.
+        """
+        try:
+            result = self._client.complete(*args, **kwargs)
+            # Estimate token usage (rough approximation)
+            prompt_tokens = len(str(args) + str(kwargs)) // 4  # Rough token estimation
+            completion_tokens = len(result) // 4
+            total_tokens = prompt_tokens + completion_tokens
+
+            # Estimate cost (rough approximation for OpenAI)
+            cost_per_token = 0.00015  # Rough average for GPT models
+            estimated_cost = total_tokens * cost_per_token
+
+            _record_llm_usage(self._role_name, tokens=total_tokens, cost=estimated_cost)
+            return result
+        except Exception as e:
+            _record_llm_usage(self._role_name, error=True)
+            raise
+
+    def chat(self, *args, **kwargs):
+        """
+        Track usage for chat calls.
+        """
+        try:
+            result = self._client.chat(*args, **kwargs)
+            # Estimate token usage (rough approximation)
+            prompt_tokens = len(str(args) + str(kwargs)) // 4
+            completion_tokens = len(str(result)) // 4
+            total_tokens = prompt_tokens + completion_tokens
+
+            cost_per_token = 0.00015
+            estimated_cost = total_tokens * cost_per_token
+
+            _record_llm_usage(self._role_name, tokens=total_tokens, cost=estimated_cost)
+            return result
+        except Exception as e:
+            _record_llm_usage(self._role_name, error=True)
+            raise
+
+    def generate(self, *args, **kwargs):
+        """
+        Track usage for generate calls.
+        """
+        try:
+            result = self._client.generate(*args, **kwargs)
+            # Estimate token usage (rough approximation)
+            prompt_tokens = len(str(args) + str(kwargs)) // 4
+            completion_tokens = len(str(result)) // 4
+            total_tokens = prompt_tokens + completion_tokens
+
+            cost_per_token = 0.00015
+            estimated_cost = total_tokens * cost_per_token
+
+            _record_llm_usage(self._role_name, tokens=total_tokens, cost=estimated_cost)
+            return result
+        except Exception as e:
+            _record_llm_usage(self._role_name, error=True)
+            raise
+
+    @property
+    def client(self):
+        """Pass through client property."""
+        return self._client.client
+
+
+def create_analytics_explainer_llm():
+    """
+    Factory for analytics explainer LLM role.
+    """
     return create_llm_for_role("analytics_explainer")
 
 
-def create_hpo_planner_llm() -> LLMProtocol:
-    """Create LLM for HPO planning tasks."""
+def create_hpo_planner_llm():
+    """
+    Factory for HPO planner LLM role.
+    """
     return create_llm_for_role("hpo_planner")
 
 
-def create_news_features_llm() -> LLMProtocol:
-    """Create LLM for news feature extraction tasks."""
-    return create_llm_for_role("news_features")
+def create_news_features_llm():
+    """
+    Factory for news features/enrichment LLM role.
+    """
+    return create_llm_for_role("news_enricher")
 
 
-def create_reporting_llm() -> LLMProtocol:
-    """Create LLM for reporting and summarization tasks."""
-    return create_llm_for_role("reporting")
+def create_research_agent_llm():
+    """
+    Factory for research agent LLM role.
+    """
+    return create_llm_for_role("research_agent")
 
 
-def test_llm_backends():
-    """Test function to verify all configured LLM backends are working."""
-    config = load_config()
-    backends = config.get("llm_backends", {})
-    roles = config.get("default_llm_roles", {})
-
-    print("Testing LLM Backends Configuration")
-    print("=" * 50)
-
-    # Test each backend
-    for backend_name, backend_config in backends.items():
-        print(f"\nTesting backend: {backend_name}")
-        try:
-            cfg = get_llm_backend(backend_name)
-            print(f"  ✓ Config loaded: provider={cfg.provider}, model={cfg.model}")
-
-            # Try to create a client (but don't make actual API calls)
-            if cfg.provider == "smith":
-                from .smith_client import SmithLLMClient
-                client = SmithLLMClient(model=cfg.model)
-                health = client.health_check()
-                print(f"  ✓ Smith client initialized: {health['status']}")
-            elif cfg.provider == "openai":
-                from .client import LLMClient
-                client = LLMClient(model=cfg.model)
-                print(f"  ✓ OpenAI client initialized: {'✓' if client.client else '✗ (no API key)'}")
-            elif cfg.provider == "lm_studio":
-                print(f"  ✓ LM Studio config valid: base_url={cfg.base_url}")
-
-        except Exception as e:
-            print(f"  ✗ Failed: {e}")
-
-    # Test role mappings
-    print("\nTesting Role Mappings")
-    print("-" * 30)
-    for role, backend in roles.items():
-        print(f"  {role} → {backend}")
-        try:
-            # Just test that the role can be resolved (don't create actual client)
-            cfg = get_llm_backend(backend)
-            print(f"    ✓ Maps to {cfg.provider}")
-        except Exception as e:
-            print(f"    ✗ Failed: {e}")
-
-    print("\nLLM Backend Test Complete")
+def create_reporting_agent_llm():
+    """
+    Factory for reporting agent LLM role.
+    """
+    return create_llm_for_role("reporting_agent")
 
 
-if __name__ == "__main__":
-    test_llm_backends()
+def create_explainability_agent_llm():
+    """
+    Factory for explainability agent LLM role.
+    """
+    return create_llm_for_role("explainability_agent")
+
+
+def create_notification_agent_llm():
+    """
+    Factory for notification agent LLM role.
+    """
+    return create_llm_for_role("notification_agent")
+
+
+def create_strategy_planner_llm():
+    """
+    Factory for strategy planner LLM role.
+    """
+    return create_llm_for_role("strategy_planner")
+
+
+# Legacy/deprecated functions (keep for backward compatibility)
+def create_news_analyzer_llm():
+    """
+    Factory for news analyzer LLM role (deprecated - use create_research_agent_llm).
+    """
+    return create_llm_for_role("research_agent")
+
+
+def create_risk_assessment_llm():
+    """
+    Factory for risk assessment LLM role (deprecated - use create_analytics_explainer_llm).
+    """
+    return create_llm_for_role("analytics_explainer")

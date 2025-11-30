@@ -79,6 +79,10 @@ def forecasting_node(state: GraphState) -> GraphState:
         for symbol in symbols:
             if symbol in features:
                 sym_data = features[symbol]
+                # Convert dict back to DataFrame if needed
+                if isinstance(sym_data, dict):
+                    sym_data = pd.DataFrame.from_dict(sym_data, orient='index')
+                    sym_data.index = pd.to_datetime(sym_data.index)
                 # Ensure 'y' column exists (target variable)
                 if 'y' not in sym_data.columns:
                     # Create target variable if missing
@@ -115,6 +119,11 @@ def forecasting_node(state: GraphState) -> GraphState:
             continue
             
         data = features[symbol]
+        
+        # Convert dict back to DataFrame if needed
+        if isinstance(data, dict):
+            data = pd.DataFrame.from_dict(data, orient='index')
+            data.index = pd.to_datetime(data.index)
         
         # Validate data
         required_columns = ['close']
@@ -161,6 +170,10 @@ def forecasting_node(state: GraphState) -> GraphState:
                 for sym in symbol_to_idx.keys():
                     if sym in features:
                         sym_data = features[sym]
+                        # Convert dict back to DataFrame if needed
+                        if isinstance(sym_data, dict):
+                            sym_data = pd.DataFrame.from_dict(sym_data, orient='index')
+                            sym_data.index = pd.to_datetime(sym_data.index)
                         # Ensure 'y' column exists (target variable)
                         if 'y' not in sym_data.columns:
                             # Create target variable if missing

@@ -72,8 +72,8 @@ class OpenAIResearchAgent:
             openai_api_key: OpenAI API key (optional, will try to load from config)
         """
         # Use the new LLM factory for role-based LLM selection
-        from src.llm.llm_factory import create_news_features_llm
-        self.llm_client = create_news_features_llm()
+        from src.llm.llm_factory import create_research_agent_llm
+        self.llm_client = create_research_agent_llm()
 
         # News API configuration (can be extended to multiple sources)
         self.news_api_key = os.getenv("NEWS_API_KEY")  # For NewsAPI.org

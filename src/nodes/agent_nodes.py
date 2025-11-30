@@ -25,12 +25,15 @@ def feature_agent_node(state: GraphState) -> GraphState:
         for symbol, data in state['raw_data'].items():
             try:
                 features_df = agent.engineer_features_for_symbol(symbol, data, experiment="default")
-                features[symbol] = features_df
+                # Convert DataFrame to serializable format for LangSmith tracing
+                features_df.index = features_df.index.astype(str)
+                features[symbol] = features_df.to_dict('index')
                 logger.info(f"Generated {features_df.shape[1]} features for {symbol}")
             except Exception as e:
                 logger.error(f"Failed to generate features for {symbol}: {e}")
                 # Fall back to original data if feature engineering fails
-                features[symbol] = data
+                data.index = data.index.astype(str)
+                features[symbol] = data.to_dict('index')
 
         state['features'] = features
         return state
@@ -38,8 +41,13 @@ def feature_agent_node(state: GraphState) -> GraphState:
     except ImportError as e:
         logger.warning(f"FeatureEngineer import failed ({e}), falling back to basic FeatureAgent")
         # Fallback to original simple feature agent
-        agent = FeatureAgent()
-        state['features'] = agent.generate_features(state['raw_data'])
+        features = agent.generate_features(state['raw_data'])
+        # Convert DataFrames to serializable format
+        serializable_features = {}
+        for symbol, df in features.items():
+            df.index = df.index.astype(str)
+            serializable_features[symbol] = df.to_dict('index')
+        state['features'] = serializable_features
         return state
 
 from ..agents.analytics_agent import AnalyticsAgent
@@ -56,7 +64,11 @@ def analytics_agent_node(state: GraphState) -> GraphState:
         state.get('raw_data', {})
     )
 
-    state['analytics_summary'] = analytics_summary
+    # Convert DataFrame to serializable format for LangSmith tracing
+    if analytics_summary is not None and not analytics_summary.empty:
+        state['analytics_summary'] = analytics_summary.to_dict('records')
+    else:
+        state['analytics_summary'] = []
 
     if analytics_summary is not None and not analytics_summary.empty:
         best_rows = analytics_summary.sort_values('mape').groupby('symbol').first()
@@ -76,7 +88,11 @@ def decision_agent_node(state: GraphState, config: dict) -> GraphState:
     """
     logger.info("--- Node: Decision Agent ---")
     agent = DecisionAgent(config.get('hpo', {}))
-    best_models = agent.select_best_model(state['performance_summary'], state.get('anomalies', {}))
+    
+    # Convert analytics_summary back to DataFrame for the agent
+    analytics_summary = pd.DataFrame(state.get('analytics_summary', []))
+    
+    best_models = agent.select_best_model(analytics_summary, state.get('anomalies', {}))
     
     recommended_actions = []
     for symbol, model in best_models.items():
@@ -89,7 +105,7 @@ def decision_agent_node(state: GraphState, config: dict) -> GraphState:
 
     # Check if HPO is needed
     hpo_decision = agent.should_run_hpo(
-        state['performance_summary'],
+        analytics_summary,
         state.get('anomalies'),
         state.get('market_conditions'),
         state.get('raw_data')
@@ -264,43 +280,89 @@ def news_data_node(state: GraphState) -> GraphState:
     
     return state
 
+from agents.llm_news_agent import LLMNewsFeatureAgent, RawNewsItem, EnrichedNewsFeature
+
+def llm_news_enrichment_node(state: GraphState) -> GraphState:
+    """
+    Runs the LLM news feature enrichment agent to add structured features to news articles.
+    """
+    logger.info("--- Node: LLM News Enrichment Agent ---")
+
+    try:
+        from src.llm.llm_factory import create_news_features_llm
+        llm_client = create_news_features_llm()
+
+        agent = LLMNewsFeatureAgent(llm_client)
+
+        # Get news articles from previous research
+        news_insights = state.get('news_insights')
+        if not news_insights or not hasattr(news_insights, 'key_news'):
+            logger.warning("No news insights available for enrichment")
+            state['enriched_news'] = []
+            return state
+
+        # Convert ResearchInsights articles to RawNewsItem format
+        enriched_features = []
+
+        for article in news_insights.key_news[:10]:  # Limit to avoid rate limits
+            try:
+                # Convert article to RawNewsItem format
+                raw_item = RawNewsItem(
+                    symbol=article.symbols[0] if article.symbols else "UNKNOWN",
+                    timestamp=article.published_at,
+                    headline=article.title,
+                    body=article.content,
+                    provider=article.source
+                )
+
+                # Enrich the news item
+                enriched_feature = agent.enrich_item(raw_item)
+                enriched_features.append(enriched_feature.__dict__)
+
+                logger.info(f"Enriched news for {raw_item.symbol}")
+
+            except Exception as e:
+                logger.warning(f"Failed to enrich news item: {e}")
+                continue
+
+        # Store enriched news features
+        state['enriched_news'] = enriched_features
+
+        logger.info(f"Enriched {len(enriched_features)} news items with structured features")
+
+    except Exception as e:
+        logger.error(f"LLM news enrichment failed: {e}")
+        state['enriched_news'] = []
+
+    return state
+
 from agents.llm_analytics_agent import LLMAnalyticsExplainerAgent, AnalyticsInput
 
 def llm_analytics_node(state: GraphState) -> GraphState:
     """
     Runs the LLM analytics explainer agent to provide natural language insights.
+    Now uses the new orchestrator for JSON + Markdown reports with LangSmith tracing.
     """
     logger.info("--- Node: LLM Analytics Agent ---")
-    
+
     try:
-        from src.llm.llm_factory import create_analytics_explainer_llm
-        llm_client = create_analytics_explainer_llm()
-        
-        agent = LLMAnalyticsExplainerAgent(llm_client)
-        
-        # Prepare input data
-        performance_summary = state.get('analytics_summary', pd.DataFrame()).to_dict('records')
-        drift_events = []  # Could be populated from drift detection results
-        
-        analytics_input = AnalyticsInput(
-            performance_summary=performance_summary,
-            drift_events=drift_events
-        )
-        
-        # Get LLM analysis
-        recommendation = agent.analyze(analytics_input)
-        
-        # Store results
-        state['llm_analytics_summary'] = recommendation.summary_text
-        state['llm_actions'] = recommendation.actions
-        state['llm_notes'] = recommendation.notes_for_humans
-        
-        logger.info("Generated LLM analytics insights.")
-        
+        from src.analytics.llm_analytics_orchestrator import run_llm_analytics_explainer
+
+        # Run the full orchestrator: health → LLM → JSON + Markdown reports
+        explanation = run_llm_analytics_explainer()
+
+        # Store results in state for downstream nodes
+        state['llm_analytics_summary'] = explanation.get('global_summary', 'LLM analysis completed')
+        state['llm_actions'] = explanation.get('recommendations', [])
+        state['llm_notes'] = explanation  # Store full explanation dict
+
+        logger.info("Generated LLM analytics insights with JSON/Markdown reports and LangSmith tracing.")
+
     except Exception as e:
         logger.error(f"LLM analytics failed: {e}")
         state['llm_analytics_summary'] = "LLM analysis unavailable"
-    
+        state['errors'].append(f"LLM analytics error: {e}")
+
     return state
 
 from agents.llm_hpo_planner_agent import LLMHPOPlannerAgent, HPOPlanInput, HPORun
@@ -340,4 +402,92 @@ def llm_hpo_planning_node(state: GraphState) -> GraphState:
     except Exception as e:
         logger.error(f"LLM HPO planning failed: {e}")
     
+    return state
+
+from agents.forecast_agent import ForecastAgent
+
+def forecast_agent_node(state: GraphState) -> GraphState:
+    """
+    Runs the forecast agent to interpret raw forecasts and produce risk-aware JSON summaries.
+    """
+    logger.info("--- Node: Forecast Agent ---")
+
+    try:
+        agent = ForecastAgent()
+
+        # Get forecasts and analytics data
+        forecasts = state.get('forecasts', {})
+        analytics_summary = pd.DataFrame(state.get('analytics_summary', []))
+
+        # Get guardrail information from state
+        guardrail_log = state.get('guardrail_log', [])
+        guardrail_flags = []
+
+        # Extract active guardrail flags from the log
+        for entry in guardrail_log:
+            if isinstance(entry, dict) and 'flag' in entry:
+                guardrail_flags.append(entry['flag'])
+            elif isinstance(entry, str):
+                # Try to extract flags from string entries
+                if 'shock_regime' in entry.lower():
+                    guardrail_flags.append('shock_regime_active')
+                elif 'high_error' in entry.lower():
+                    guardrail_flags.append('high_error_recently')
+                elif 'news_shock' in entry.lower():
+                    guardrail_flags.append('news_shock_active')
+                elif 'drift' in entry.lower():
+                    guardrail_flags.append('data_drift_suspected')
+
+        # Process each symbol's forecasts
+        interpreted_forecasts = {}
+
+        for symbol in state.get('symbols', []):
+            symbol_forecasts = forecasts.get(symbol, [])
+            if not symbol_forecasts:
+                logger.warning(f"No forecasts available for {symbol}")
+                continue
+
+            # Get error metrics for this symbol from analytics
+            symbol_metrics = {}
+            if not analytics_summary.empty:
+                symbol_data = analytics_summary[analytics_summary['symbol'] == symbol]
+                if not symbol_data.empty:
+                    # Use the best performing model's metrics
+                    best_row = symbol_data.loc[symbol_data['mape'].idxmin()]
+                    symbol_metrics = {
+                        'directional_accuracy': best_row.get('directional_accuracy', 0),
+                        'smape': best_row.get('smape', 0),
+                        'mae': best_row.get('mae', 0),
+                        'mae_vs_baseline': best_row.get('mae_vs_baseline', 1.0)
+                    }
+
+            # Create regime info
+            regime_info = {
+                'guardrail_flags': guardrail_flags
+            }
+
+            # Interpret forecasts for this symbol
+            try:
+                interpretation = agent.interpret_forecasts(
+                    symbol=symbol,
+                    forecasts=symbol_forecasts,
+                    error_metrics=symbol_metrics,
+                    regime_and_guardrail_info=regime_info
+                )
+                interpreted_forecasts[symbol] = interpretation
+                logger.info(f"Interpreted forecasts for {symbol}")
+            except Exception as e:
+                logger.error(f"Failed to interpret forecasts for {symbol}: {e}")
+                continue
+
+        # Store interpreted forecasts in state
+        state['interpreted_forecasts'] = interpreted_forecasts
+
+        logger.info(f"Forecast agent completed interpretation for {len(interpreted_forecasts)} symbols")
+
+    except Exception as e:
+        logger.error(f"Forecast agent failed: {e}")
+        state['interpreted_forecasts'] = {}
+        state['errors'].append(f"Forecast agent error: {e}")
+
     return state

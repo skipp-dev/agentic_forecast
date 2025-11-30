@@ -112,40 +112,39 @@ langsmith:
 
 # --- LLM Configuration ---
 llm:
-  enabled: true
-  model: "gpt-4o"
-  analytics_explanation: true
-  hpo_planning: true
-  news_analysis: true
+  # Which logical role uses which backend
+  default_llm_roles:
+    analytics_explainer:
+      backend: openai_gpt4o_mini  # Primary analytics & metrics explanation
+    hpo_planner:
+      backend: openai_o4_mini     # HPO planning & reasoning
+    news_enricher:
+      backend: openai_o4_mini     # News feature extraction & structuring
+    research_agent:
+      backend: openai_o4_mini     # Macro research & hypothesis generation
+    reporting_agent:
+      backend: openai_gpt4o_mini  # Report generation (cost-effective)
+    explainability_agent:
+      backend: openai_gpt4o_mini  # Per-symbol explanations
+    notification_agent:
+      backend: openai_gpt4o_mini  # Alert processing & notifications
+    strategy_planner:
+      backend: openai_o4_mini     # Strategy planning & portfolio optimization
 
-# --- LLM Backends Configuration ---
-llm_backends:
-  # Local LM Studio – for cheap, offline work
-  local_lm_studio:
-    provider: lm_studio
-    base_url: "http://127.0.0.1:1234/v1"
-    model: "meta-llama-3.1-8b-instruct"
-
-  # Direct OpenAI – if you want to call OpenAI directly
-  openai_direct:
-    provider: openai
-    model: "gpt-4o"
-
-  # Smith (LangSmith-managed) – using the "Model usage" page config
-  smith_analytics:
-    provider: smith
-    model: "o4-mini"       # matches LangSmith model config
-
-  smith_heavy_research:
-    provider: smith
-    model: "gpt-5-mini"  # matches LangSmith model config
-
-# --- LLM Role Mappings ---
-default_llm_roles:
-  reporting:           smith_analytics
-  analytics_explainer: smith_analytics
-  hpo_planner:         smith_heavy_research
-  news_features:       smith_analytics
+  # Concrete backends (you can add more later)
+  backends:
+    openai_o4_mini:
+      provider: openai
+      model: "o4-mini"          # Best for reasoning & planning tasks
+      base_url: null            # null = default OpenAI API
+    openai_gpt4o_mini:
+      provider: openai
+      model: "gpt-4o-mini"      # Cost-effective for analytics & explanations
+      base_url: null
+    openai_gpt5_mini:
+      provider: openai
+      model: "gpt-5-mini"       # if/when available on your account
+      base_url: null
 
 # --- Model Preferences ---
 models:

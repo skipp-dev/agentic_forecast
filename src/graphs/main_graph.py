@@ -16,8 +16,8 @@ from ..nodes import (
 
 def should_continue(state: GraphState) -> str:
     """
-    Determines whether to continue with the main workflow or trigger a retraining loop.
-    Includes loop prevention to avoid infinite retraining/HPO cycles.
+    Determines whether to continue with the main workflow or trigger specialized loops.
+    Includes loop prevention and continuous learning triggers.
     """
     # Check for loop prevention - limit retraining/HPO attempts
     retraining_history = state.get('retraining_history', [])
@@ -29,6 +29,22 @@ def should_continue(state: GraphState) -> str:
     retraining_attempts = len(retraining_history)
     hpo_attempts = len(hpo_results) if hpo_results else 0
 
+    # Check for continuous learning triggers from reports
+    continuous_learning_applied = state.get('continuous_learning_applied', False)
+    learning_feedback = state.get('learning_feedback', {})
+
+    if continuous_learning_applied and learning_feedback:
+        # Check if high-priority actions were triggered
+        decisions_updated = learning_feedback.get('decisions_updated', [])
+        for decision in decisions_updated:
+            if decision['type'] == 'retraining' and retraining_attempts < max_retraining_attempts:
+                print(f"🔄 Continuous learning triggering retraining for {decision.get('symbol', 'all')}")
+                return "retrain"
+            elif decision['type'] == 'hpo' and hpo_attempts < max_hpo_attempts:
+                print(f"🔄 Continuous learning triggering HPO for {decision.get('symbol', 'all')}")
+                return "hpo"
+
+    # Original logic for drift and HPO triggers
     if state.get('hpo_triggered') and hpo_attempts < max_hpo_attempts:
         return "hpo"
     elif state.get('drift_detected') and retraining_attempts < max_retraining_attempts:
@@ -37,6 +53,7 @@ def should_continue(state: GraphState) -> str:
         # Reset flags to prevent future triggers in this run
         state['hpo_triggered'] = False
         state['drift_detected'] = False
+        state['continuous_learning_applied'] = False
         return "continue"
 
 def create_main_graph(config: dict):
@@ -64,6 +81,7 @@ def create_main_graph(config: dict):
     graph.add_node("create_ensemble", ensemble_nodes.ensemble_node)
     graph.add_node("run_analytics", agent_nodes.analytics_agent_node)
     graph.add_node("llm_analytics", agent_nodes.llm_analytics_node)
+    graph.add_node("interpret_forecasts", agent_nodes.forecast_agent_node)
     graph.add_node("make_decisions", decision_agent_node_with_config)
     graph.add_node("apply_guardrails", guardrail_agent_node_with_config)
     graph.add_node("execute_actions", execution_nodes.action_executor_node)
@@ -97,7 +115,8 @@ def create_main_graph(config: dict):
     graph.add_edge("generate_forecasts", "create_ensemble")
     graph.add_edge("create_ensemble", "run_analytics")
     graph.add_edge("run_analytics", "llm_analytics")
-    graph.add_edge("llm_analytics", "make_decisions")
+    graph.add_edge("llm_analytics", "interpret_forecasts")
+    graph.add_edge("interpret_forecasts", "make_decisions")
     graph.add_edge("make_decisions", "apply_guardrails")
     # graph.add_edge("apply_guardrails", "run_explainability")
     # graph.add_edge("run_explainability", "execute_actions")

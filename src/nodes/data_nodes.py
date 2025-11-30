@@ -69,6 +69,9 @@ def _load_data_sync(state: GraphState) -> GraphState:
                 # Filter to date range
                 data = data[(data.index >= start_date) & (data.index <= end_date)]
 
+                # Convert index to string for JSON serialization
+                data.index = data.index.astype(str)
+
                 # Validate data structure
                 if _validate_data_structure(data):
                     raw_data[symbol] = data

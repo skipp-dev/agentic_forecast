@@ -24,6 +24,9 @@ GUARDRAIL_DECISION_PATH = os.getenv(
 EVALUATION_RESULTS_PATH = os.getenv(
     "EVALUATION_RESULTS_PATH", "data/metrics/evaluation_results_baseline_latest.csv"
 )
+FORECAST_AGENT_OUTPUT_PATH = os.getenv(
+    "FORECAST_AGENT_OUTPUT_PATH", "data/metrics/forecast_agent_output_latest.json"
+)
 
 
 def _load_json_safely(path: str) -> Dict[str, Any]:
@@ -157,6 +160,49 @@ def build_metrics_registry() -> CollectorRegistry:
     forecast_metrics_timestamp = Gauge(
         "forecast_metrics_run_timestamp_seconds",
         "Unix timestamp when latest forecast evaluation finished",
+        registry=registry,
+    )
+
+    # Forecast Agent output metrics
+    forecast_predicted_return = Gauge(
+        "forecast_predicted_return",
+        "Predicted return per symbol and horizon from forecast agent",
+        ["symbol", "horizon"],
+        registry=registry,
+    )
+
+    forecast_confidence_level = Gauge(
+        "forecast_confidence_level",
+        "Confidence level per symbol (0=low, 1=medium, 2=high)",
+        ["symbol"],
+        registry=registry,
+    )
+
+    forecast_guardrail_flag = Gauge(
+        "forecast_guardrail_flag",
+        "Guardrail flags per symbol (1=active, 0=inactive)",
+        ["symbol", "flag"],
+        registry=registry,
+    )
+
+    forecast_risk_model_confidence_comment = Gauge(
+        "forecast_risk_model_confidence_comment",
+        "Model confidence comment per symbol",
+        ["symbol", "comment"],
+        registry=registry,
+    )
+
+    forecast_risk_regime_comment = Gauge(
+        "forecast_risk_regime_comment",
+        "Regime comment per symbol",
+        ["symbol", "comment"],
+        registry=registry,
+    )
+
+    forecast_agent_timestamp = Gauge(
+        "forecast_agent_run_timestamp_seconds",
+        "Unix timestamp when latest forecast agent run finished",
+        ["symbol"],
         registry=registry,
     )
 
@@ -324,6 +370,120 @@ def build_metrics_registry() -> CollectorRegistry:
         print(f"Warning: Could not load forecast metrics: {e}")
         pass
 
+    # 7) Load and populate forecast agent output metrics
+    try:
+        forecast_agent_output = _load_json_safely(FORECAST_AGENT_OUTPUT_PATH)
+        
+        if forecast_agent_output:
+            symbol = forecast_agent_output.get("symbol", "UNKNOWN")
+            
+            # Set confidence level (convert string to numeric)
+            confidence_str = forecast_agent_output.get("risk_assessment", {}).get("model_confidence_comment", "")
+            confidence_level = 0  # default to low
+            if "high" in confidence_str.lower():
+                confidence_level = 2
+            elif "medium" in confidence_str.lower():
+                confidence_level = 1
+            # else remains 0 for low
+            
+            forecast_confidence_level.labels(symbol=symbol).set(confidence_level)
+            
+            # Set predicted returns per horizon
+            horizon_forecasts = forecast_agent_output.get("horizon_forecasts", [])
+            for forecast in horizon_forecasts:
+                horizon = str(forecast.get("horizon", "unknown"))
+                predicted_return = forecast.get("predicted_return", 0.0)
+                forecast_predicted_return.labels(symbol=symbol, horizon=horizon).set(predicted_return)
+            
+            # Set guardrail flags
+            guardrail_flags = forecast_agent_output.get("risk_assessment", {}).get("guardrail_flags", [])
+            all_possible_flags = {
+                "high_error_recently", "shock_regime_active", "data_drift_suspected",
+                "missing_feature_values", "pipeline_failure_recently", "news_shock_active"
+            }
+            
+            for flag in all_possible_flags:
+                is_active = 1 if flag in guardrail_flags else 0
+                forecast_guardrail_flag.labels(symbol=symbol, flag=flag).set(is_active)
+            
+            # Set risk comments (truncated to reasonable length for labels)
+            model_comment = forecast_agent_output.get("risk_assessment", {}).get("model_confidence_comment", "")
+            regime_comment = forecast_agent_output.get("risk_assessment", {}).get("regime_comment", "")
+            
+            # Truncate comments to prevent label bloat (Prometheus has limits)
+            model_comment_truncated = model_comment[:200] + "..." if len(model_comment) > 200 else model_comment
+            regime_comment_truncated = regime_comment[:200] + "..." if len(regime_comment) > 200 else regime_comment
+            
+            forecast_risk_model_confidence_comment.labels(
+                symbol=symbol, comment=model_comment_truncated
+            ).set(1)
+            
+            forecast_risk_regime_comment.labels(
+                symbol=symbol, comment=regime_comment_truncated
+            ).set(1)
+            
+            # Set timestamp (use current time if not available)
+            forecast_agent_timestamp.labels(symbol=symbol).set(time.time())
+            
+    except Exception as e:
+        print(f"Warning: Could not load forecast agent output metrics: {e}")
+        pass
+    
+    # 8) Add LLM usage metrics
+    try:
+        from src.llm.llm_factory import get_llm_usage_stats
+        llm_stats = get_llm_usage_stats()
+        
+        # Create dynamic gauges for LLM usage
+        llm_calls = Gauge(
+            "llm_role_calls_total",
+            "Total number of LLM calls per role",
+            ["role"],
+            registry=registry,
+        )
+        
+        llm_tokens = Gauge(
+            "llm_role_tokens_total",
+            "Total tokens used per LLM role",
+            ["role"],
+            registry=registry,
+        )
+        
+        llm_cost = Gauge(
+            "llm_role_cost_total",
+            "Total estimated cost per LLM role",
+            ["role"],
+            registry=registry,
+        )
+        
+        llm_errors = Gauge(
+            "llm_role_errors_total",
+            "Total errors per LLM role",
+            ["role"],
+            registry=registry,
+        )
+        
+        llm_last_used = Gauge(
+            "llm_role_last_used_timestamp",
+            "Last used timestamp per LLM role",
+            ["role"],
+            registry=registry,
+        )
+        
+        # Populate LLM metrics
+        for role, stats in llm_stats.items():
+            llm_calls.labels(role=role).set(stats['calls'])
+            llm_tokens.labels(role=role).set(stats['total_tokens'])
+            llm_cost.labels(role=role).set(stats['total_cost'])
+            llm_errors.labels(role=role).set(stats['errors'])
+            if stats['last_used']:
+                llm_last_used.labels(role=role).set(stats['last_used'])
+                
+    except Exception as e:
+        # If LLM stats are unavailable, just skip
+        print(f"Warning: Could not load LLM usage metrics: {e}")
+        pass
+
     return registry
 
 
@@ -331,3 +491,29 @@ def generate_metrics_text() -> bytes:
     """Build registry and return Prometheus text output."""
     registry = build_metrics_registry()
     return generate_latest(registry)
+
+
+def save_forecast_agent_output(forecast_agent_output: Dict[str, Any]) -> None:
+    """
+    Save forecast agent output to JSON file for Prometheus metrics export.
+    
+    Args:
+        forecast_agent_output: The output dictionary from ForecastAgent.interpret_forecasts()
+    """
+    try:
+        # Ensure directory exists
+        os.makedirs(os.path.dirname(FORECAST_AGENT_OUTPUT_PATH), exist_ok=True)
+        
+        # Add timestamp if not present
+        if "timestamp" not in forecast_agent_output:
+            forecast_agent_output["timestamp"] = time.time()
+        
+        # Save to file
+        with open(FORECAST_AGENT_OUTPUT_PATH, "w", encoding="utf-8") as f:
+            json.dump(forecast_agent_output, f, indent=2, default=str)
+            
+        print(f"Forecast agent output saved to {FORECAST_AGENT_OUTPUT_PATH}")
+        
+    except Exception as e:
+        print(f"Error saving forecast agent output: {e}")
+        raise

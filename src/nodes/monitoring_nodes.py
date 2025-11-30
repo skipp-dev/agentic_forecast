@@ -11,9 +11,14 @@ def drift_detection_node(state: GraphState) -> GraphState:
     drift_detection_agent = DriftDetectionAgent()
     drift_metrics = drift_detection_agent.detect_drift(state['raw_data'])
     
-    state['drift_metrics'] = drift_metrics
+    # Convert DataFrame to serializable format for LangSmith tracing
+    if not drift_metrics.empty:
+        drift_metrics.index = drift_metrics.index.astype(str)
+        state['drift_metrics'] = drift_metrics.to_dict('index')
+    else:
+        state['drift_metrics'] = {}
     
-    if not drift_metrics.empty and drift_metrics['drift_detected'].any():
+    if drift_metrics['drift_detected'].any():
         state['drift_detected'] = True
         print("🚨 Drift detected!")
     else:
@@ -32,6 +37,12 @@ def risk_assessment_node(state: GraphState) -> GraphState:
     risk_assessment_agent = RiskAssessmentAgent()
     risk_kpis = risk_assessment_agent.assess_risk(state['raw_data'])
     
-    state['risk_kpis'] = risk_kpis
+    # Convert DataFrame to serializable format for LangSmith tracing
+    if not risk_kpis.empty:
+        risk_kpis.index = risk_kpis.index.astype(str)
+        state['risk_kpis'] = risk_kpis.to_dict('index')
+    else:
+        state['risk_kpis'] = {}
+    
     print(f"✅ Risk assessment complete.")
     return state

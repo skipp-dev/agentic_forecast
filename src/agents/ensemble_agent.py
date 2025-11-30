@@ -7,7 +7,7 @@ class EnsembleAgent:
     Agent for creating ensemble forecasts from multiple model predictions.
     """
 
-    def create_ensemble_forecast(self, forecasts: Dict[str, pd.DataFrame], performance_summary: pd.DataFrame) -> Dict[str, pd.DataFrame]:
+    def create_ensemble_forecast(self, forecasts: Dict[str, Dict[str, pd.DataFrame]], performance_summary: pd.DataFrame) -> Dict[str, pd.DataFrame]:
         """
         Creates an ensemble forecast using a weighted average based on model performance (MAPE).
         """

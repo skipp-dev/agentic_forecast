@@ -6,4 +6,4 @@ scrape_configs:
   - job_name: "agentic_forecast_api"
     scrape_interval: 15s
     static_configs:
-      - targets: ["127.0.0.1:8000"]
+      - targets: ["ib-forecast:8000"]

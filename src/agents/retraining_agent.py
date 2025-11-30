@@ -15,12 +15,12 @@ class RetrainingAgent:
         print("---")
         print("Retraining agent is running...")
 
-        drift_metrics = state.get('drift_metrics', pd.DataFrame())
+        drift_metrics = state.get('drift_metrics', {})
         drift_detected = state.get('drift_detected', False)
 
         history = state.get('retraining_history', [])
 
-        if not drift_detected or drift_metrics.empty:
+        if not drift_detected or not drift_metrics:
             print("No drift detected or no metrics available. Skipping retraining.")
             history_entry = {
                 "timestamp": time.time(),
@@ -36,9 +36,13 @@ class RetrainingAgent:
                 "drift_detected": False
             }
 
-        drift_symbols = drift_metrics.loc[
-            drift_metrics['drift_detected'] == True, 'symbol'
-        ].tolist()
+        # Find symbols with drift detected
+        drift_symbols = []
+        severity_values = []
+        for symbol, metrics in drift_metrics.items():
+            if metrics.get('drift_detected', False):
+                drift_symbols.append(symbol)
+                severity_values.append(abs(metrics.get('mean_drift_percentage', 0)))
 
         if not drift_symbols:
             print("Drift flag was set but no symbols reached the threshold. Skipping retraining.")
@@ -56,10 +60,7 @@ class RetrainingAgent:
                 "drift_detected": False
             }
 
-        severity_series = drift_metrics.loc[
-            drift_metrics['symbol'].isin(drift_symbols), 'mean_drift_percentage'
-        ].abs()
-        severity = float(severity_series.max()) if not severity_series.empty else 0.0
+        severity = max(severity_values) if severity_values else 0.0
 
         if severity > 25:
             strategy = "extended_batch"

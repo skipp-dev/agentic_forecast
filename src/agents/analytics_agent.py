@@ -31,8 +31,7 @@ class AnalyticsAgent:
 
             actuals_df = raw_data[symbol].copy()
             if not isinstance(actuals_df.index, pd.DatetimeIndex):
-                actuals_df['ds'] = pd.to_datetime(actuals_df['ds'])
-                actuals_df.set_index('ds', inplace=True)
+                actuals_df.index = pd.to_datetime(actuals_df.index)
 
             for model_family, forecast_df in model_forecasts.items():
                 

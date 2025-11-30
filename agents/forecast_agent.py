@@ -1,544 +1,424 @@
+#!/usr/bin/env python3
 """
 Forecast Agent
 
-Advanced forecasting agent with ensemble methods and GPU acceleration.
-Extends existing forecast capabilities with sophisticated models.
+Risk-aware interpreter that translates raw model forecasts into actionable,
+human-readable insights with uncertainty quantification and scenario analysis.
 """
 
 import os
 import sys
-import numpy as np
-import pandas as pd
-from typing import Dict, List, Any, Optional, Tuple
+import json
+from typing import Dict, List, Any, Optional, Tuple, Literal
 import logging
-from datetime import datetime, timedelta
-from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor
-from sklearn.linear_model import Ridge
-from sklearn.preprocessing import StandardScaler
-from sklearn.metrics import mean_absolute_error, mean_squared_error
-import xgboost as xgb
-import lightgbm as lgb
-import torch
-import torch.nn as nn
-from torch.utils.data import Dataset, DataLoader
+from datetime import datetime
 
 # Add paths
 sys.path.append(os.path.dirname(__file__))
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 
-from src.gpu_services import get_gpu_services
-from src.data_pipeline import DataPipeline
-from agents.hyperparameter_search_agent import HyperparameterSearchAgent
-from agents.feature_engineer_agent import FeatureEngineerAgent
-
 logger = logging.getLogger(__name__)
 
-class TimeSeriesDataset(Dataset):
-    """PyTorch dataset for time series forecasting."""
+# Guardrail flag categories
+CRITICAL_GUARDRAILS = {
+    "data_drift_suspected",
+    "missing_feature_values",
+    "pipeline_failure_recently",
+}
 
-    def __init__(self, X: np.ndarray, y: np.ndarray, sequence_length: int = 60):
-        self.X = X
-        self.y = y
-        self.sequence_length = sequence_length
+NON_CRITICAL_GUARDRAILS = {
+    "high_error_recently",
+    "shock_regime_active",
+    "news_shock_active",
+}
 
-    def __len__(self):
-        return len(self.X) - self.sequence_length
-
-    def __getitem__(self, idx):
-        x = self.X[idx:idx + self.sequence_length]
-        y = self.y[idx + self.sequence_length]
-        return torch.tensor(x, dtype=torch.float32), torch.tensor(y, dtype=torch.float32)
-
-class LSTMModel(nn.Module):
-    """LSTM model for time series forecasting."""
-
-    def __init__(self, input_size: int, hidden_size: int = 64, num_layers: int = 2,
-                 dropout: float = 0.2):
-        super(LSTMModel, self).__init__()
-        self.hidden_size = hidden_size
-        self.num_layers = num_layers
-
-        self.lstm = nn.LSTM(input_size, hidden_size, num_layers,
-                           dropout=dropout, batch_first=True)
-        self.fc = nn.Linear(hidden_size, 1)
-
-    def forward(self, x):
-        h0 = torch.zeros(self.num_layers, x.size(0), self.hidden_size).to(x.device)
-        c0 = torch.zeros(self.num_layers, x.size(0), self.hidden_size).to(x.device)
-
-        out, _ = self.lstm(x, (h0, c0))
-        out = self.fc(out[:, -1, :])
-        return out
 
 class ForecastAgent:
     """
-    Advanced forecasting agent with ensemble methods and GPU acceleration.
+    Forecast Agent that interprets raw model outputs and produces risk-aware JSON summaries.
 
-    Extends existing ForecastAgent with:
-    - Ensemble forecasting (RF, GBM, XGBoost, LightGBM, LSTM)
-    - GPU-accelerated training and inference
-    - Automated model selection
-    - Confidence intervals and uncertainty estimation
-    - Multi-step ahead forecasting
-    - Model stacking and blending
+    This agent acts as the "cautious translator" between technical forecasts and
+    human/trading decisions, providing structured insights with uncertainty quantification.
     """
 
-    def __init__(self, gpu_services=None, data_pipeline=None,
-                 hyperparameter_agent=None, feature_agent=None):
+    def __init__(self, llm_client=None):
         """
-        Initialize forecast agent.
+        Initialize the Forecast Agent.
 
         Args:
-            gpu_services: GPU services instance
-            data_pipeline: Data pipeline instance
-            hyperparameter_agent: Hyperparameter search agent
-            feature_agent: Feature engineering agent
+            llm_client: LLM client for generating narrative comments (optional)
         """
-        super().__init__()
-        self.gpu_services = gpu_services or get_gpu_services()
-        self.data_pipeline = data_pipeline or DataPipeline()
-        self.hyperparameter_agent = hyperparameter_agent or HyperparameterSearchAgent()
-        self.feature_agent = feature_agent or FeatureEngineerAgent()
+        self.llm_client = llm_client
+        logger.info("Forecast Agent initialized")
 
-        # Model configurations
-        self.model_configs = {
-            'rf': {'class': RandomForestRegressor, 'params': {'n_estimators': 100, 'max_depth': 10}},
-            'gbm': {'class': GradientBoostingRegressor, 'params': {'n_estimators': 100, 'max_depth': 5}},
-            'xgb': {'class': xgb.XGBRegressor, 'params': {'n_estimators': 100, 'max_depth': 6}},
-            'lgb': {'class': lgb.LGBMRegressor, 'params': {'n_estimators': 100, 'max_depth': 6}},
-            'ridge': {'class': Ridge, 'params': {'alpha': 1.0}}
-        }
-
-        # Ensemble weights (learned during training)
-        self.ensemble_weights = {}
-        self.trained_models = {}
-
-        # Forecasting configuration
-        self.forecast_horizons = [1, 5, 10, 20]  # Days ahead
-        self.confidence_levels = [0.80, 0.95]
-
-        logger.info("Advanced Forecast Agent initialized with GPU acceleration")
-
-    def generate_forecast(self, symbol: str, horizon: int = 1,
-                         model_type: str = 'ensemble') -> Dict[str, Any]:
+    def interpret_forecasts(
+        self,
+        symbol: str,
+        forecasts: List[Dict[str, Any]],
+        error_metrics: Dict[str, Any],
+        regime_and_guardrail_info: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
         """
-        Generate comprehensive forecast for a symbol.
+        Interpret forecasts and produce risk-aware JSON summary.
 
         Args:
             symbol: Stock symbol
-            horizon: Forecast horizon in days
-            model_type: Model type ('rf', 'gbm', 'xgb', 'lgb', 'lstm', 'ensemble')
+            forecasts: List of forecast objects with horizon and predicted_return
+            error_metrics: Historical error metrics (MAE, MAPE, SMAPE, SWASE, directional_accuracy)
+            regime_and_guardrail_info: Current regime flags and guardrail statuses
 
         Returns:
-            Forecast results with predictions and confidence intervals
+            JSON structure with interpreted forecasts, confidence levels, and scenario notes
         """
-        logger.info(f"Generating {horizon}-day forecast for {symbol} using {model_type}")
+        logger.info(f"Interpreting forecasts for {symbol}")
 
-        # Get historical data and features
-        data = self._prepare_forecast_data(symbol)
+        # Extract guardrail flags
+        guardrail_flags = []
+        if regime_and_guardrail_info:
+            guardrail_flags = regime_and_guardrail_info.get("guardrail_flags", [])
 
-        if data is None or len(data) < 100:
-            logger.warning(f"Insufficient data for {symbol}")
-            return self._create_empty_forecast(symbol, horizon)
+        # Build horizon forecasts with confidence
+        horizon_forecasts = []
+        for forecast in forecasts:
+            horizon = forecast.get("horizon", 1)
+            predicted_return = forecast.get("predicted_return", 0.0)
 
-        # Generate forecast based on model type
-        if model_type == 'ensemble':
-            forecast = self._generate_ensemble_forecast(data, horizon)
-        elif model_type == 'lstm':
-            forecast = self._generate_lstm_forecast(data, horizon)
-        else:
-            forecast = self._generate_single_model_forecast(data, horizon, model_type)
-
-        # Add metadata
-        forecast.update({
-            'symbol': symbol,
-            'horizon': horizon,
-            'model_type': model_type,
-            'timestamp': datetime.now(),
-            'data_points': len(data)
-        })
-
-        logger.info(f"Forecast generated for {symbol}: {forecast['prediction']:.4f}")
-
-        return forecast
-
-    def _prepare_forecast_data(self, symbol: str) -> Optional[pd.DataFrame]:
-        """Prepare data for forecasting."""
-        try:
-            # Fetch raw data
-            raw_data = self.data_pipeline.av_client.get_daily_data(symbol, outputsize='full')
-            if raw_data.empty:
-                return None
-
-            data_df = pd.DataFrame(raw_data)
-
-            # Engineer features
-            feature_data = self.feature_agent.engineer_features(
-                symbol, data_df, feature_sets=['basic', 'spectral']
+            # Compute confidence for this horizon
+            confidence, confidence_reasons = self._compute_confidence_level(
+                error_metrics, guardrail_flags
             )
 
-            return feature_data
+            # Generate comment
+            comment = self._generate_forecast_comment(
+                horizon, predicted_return, confidence, regime_and_guardrail_info
+            )
 
+            horizon_forecasts.append({
+                "horizon": horizon,
+                "predicted_return": predicted_return,
+                "confidence": confidence,
+                "comment": comment
+            })
+
+        # Build risk assessment
+        risk_assessment = {
+            "model_confidence_comment": self._build_model_confidence_comment(
+                error_metrics, confidence_reasons
+            ),
+            "regime_comment": self._build_regime_comment(guardrail_flags),
+            "guardrail_flags": guardrail_flags
+        }
+
+        # Generate scenario notes
+        scenario_notes = self._generate_scenario_notes(
+            symbol, horizon_forecasts, risk_assessment, regime_and_guardrail_info
+        )
+
+        result = {
+            "symbol": symbol,
+            "horizon_forecasts": horizon_forecasts,
+            "risk_assessment": risk_assessment,
+            "scenario_notes": scenario_notes
+        }
+
+        # Save to Prometheus metrics file
+        try:
+            from services.metrics_exporter import save_forecast_agent_output
+            save_forecast_agent_output(result)
         except Exception as e:
-            logger.error(f"Data preparation failed for {symbol}: {e}")
-            return None
+            logger.warning(f"Failed to save forecast agent output for Prometheus: {e}")
 
-    def _generate_single_model_forecast(self, data: pd.DataFrame, horizon: int,
-                                      model_type: str) -> Dict[str, Any]:
-        """Generate forecast using a single model."""
-        # Prepare features and target
-        X, y = self._prepare_features_and_target(data, horizon)
+        # Log the full JSON output for audit/backtesting
+        self._log_forecast_output_for_audit(result)
 
-        if len(X) < 50:  # Minimum training samples
-            return self._create_empty_forecast(data.index.name or 'unknown', horizon)
+        return result
 
-        # Train or load model
-        model_key = f"{data.index.name or 'unknown'}_{model_type}_{horizon}"
-        if model_key not in self.trained_models:
-            self.trained_models[model_key] = self._train_model(X, y, model_type)
-
-        model = self.trained_models[model_key]
-
-        # Generate prediction using DataFrame to preserve feature names
-        latest_features = X.tail(1)
-        prediction = model.predict(latest_features)[0]
-
-        # Estimate uncertainty (simple method)
-        train_predictions = model.predict(X)
-        residuals = y - train_predictions
-        std_residuals = np.std(residuals)
-
-        # Confidence intervals
-        confidence_intervals = {}
-        for conf_level in self.confidence_levels:
-            z_score = 1.96 if conf_level == 0.95 else 1.28  # Approximate
-            margin = z_score * std_residuals
-            confidence_intervals[f'{int(conf_level*100)}%'] = {
-                'lower': prediction - margin,
-                'upper': prediction + margin
-            }
-
-        return {
-            'prediction': prediction,
-            'confidence_intervals': confidence_intervals,
-            'model_metrics': {
-                'mae': mean_absolute_error(y, train_predictions),
-                'rmse': np.sqrt(mean_squared_error(y, train_predictions))
-            }
-        }
-
-    def _generate_ensemble_forecast(self, data: pd.DataFrame, horizon: int) -> Dict[str, Any]:
-        """Generate ensemble forecast using multiple models."""
-        # Prepare features and target
-        X, y = self._prepare_features_and_target(data, horizon)
-
-        if len(X) < 50:
-            return self._create_empty_forecast(data.index.name or 'unknown', horizon)
-
-        # Train ensemble models
-        model_predictions = {}
-        model_weights = {}
-
-        for model_type in ['rf', 'gbm', 'xgb', 'lgb']:
-            try:
-                model_key = f"{data.index.name or 'unknown'}_{model_type}_{horizon}"
-                if model_key not in self.trained_models:
-                    self.trained_models[model_key] = self._train_model(X, y, model_type)
-                model = self.trained_models[model_key]
-                
-                predictions = model.predict(X)
-                model_predictions[model_type] = predictions
-
-                # Weight by inverse of MAE
-                mae = mean_absolute_error(y, predictions)
-                model_weights[model_type] = 1.0 / (mae + 1e-6)  # Avoid division by zero
-
-            except Exception as e:
-                logger.warning(f"Failed to train {model_type}: {e}")
-                continue
-
-        # Normalize weights
-        total_weight = sum(model_weights.values())
-        if total_weight > 0:
-            model_weights = {k: v/total_weight for k, v in model_weights.items()}
-        else:
-            # Equal weights if all models failed
-            model_weights = {k: 1.0/len(model_weights) for k in model_weights.keys()}
-
-        # Generate ensemble prediction using named features
-        latest_features = X.tail(1)
-        ensemble_prediction = 0.0
-
-        for model_type, weight in model_weights.items():
-            if model_type in model_predictions:
-                model_key = f"{data.index.name or 'unknown'}_{model_type}_{horizon}"
-                model_pred = self.trained_models[model_key].predict(latest_features)[0]
-                ensemble_prediction += weight * model_pred
-
-        # Ensemble uncertainty (weighted average of individual uncertainties)
-        ensemble_std = 0.0
-        for model_type, weight in model_weights.items():
-            if model_type in model_predictions:
-                train_predictions = model_predictions[model_type]
-                residuals = y - train_predictions
-                ensemble_std += weight * np.std(residuals)
-
-        # Confidence intervals
-        confidence_intervals = {}
-        for conf_level in self.confidence_levels:
-            z_score = 1.96 if conf_level == 0.95 else 1.28
-            margin = z_score * ensemble_std
-            confidence_intervals[f'{int(conf_level*100)}%'] = {
-                'lower': ensemble_prediction - margin,
-                'upper': ensemble_prediction + margin
-            }
-
-        return {
-            'prediction': ensemble_prediction,
-            'confidence_intervals': confidence_intervals,
-            'model_weights': model_weights,
-            'ensemble_metrics': {
-                'n_models': len(model_weights),
-                'weighted_mae': sum([w * mean_absolute_error(y, model_predictions.get(m, y))
-                                    for m, w in model_weights.items()])
-            }
-        }
-
-    def _generate_lstm_forecast(self, data: pd.DataFrame, horizon: int) -> Dict[str, Any]:
-        """Generate forecast using LSTM model."""
-        # Prepare sequential data
-        X, y = self._prepare_features_and_target(data, horizon)
-
-        if len(X) < 100:  # Need more data for LSTM
-            logger.warning("Insufficient data for LSTM, falling back to ensemble")
-            return self._generate_ensemble_forecast(data, horizon)
-
-        # Convert to sequences
-        scaler = StandardScaler()
-        X_scaled = scaler.fit_transform(X)
-
-        sequence_length = min(60, len(X_scaled) // 2)
-        dataset = TimeSeriesDataset(X_scaled, y.values, sequence_length)
-        dataloader = DataLoader(dataset, batch_size=32, shuffle=False)
-
-        # Train LSTM model
-        model_key = f"{data.index.name or 'unknown'}_lstm_{horizon}"
-        if model_key not in self.trained_models:
-            self.trained_models[model_key] = self._train_lstm_model(dataloader, X.shape[1])
-
-        model = self.trained_models[model_key]
-
-        # Generate prediction
-        model.eval()
-        with torch.no_grad():
-            # Get latest sequence
-            latest_sequence = X_scaled[-sequence_length:].reshape(1, sequence_length, -1)
-            latest_tensor = torch.tensor(latest_sequence, dtype=torch.float32)
-
-            if self.gpu_services and torch.cuda.is_available():
-                latest_tensor = latest_tensor.cuda()
-                model = model.cuda()
-
-            prediction = model(latest_tensor).item()
-
-        # Inverse transform if needed (assuming target is scaled)
-        # For simplicity, using raw prediction
-
-        # Estimate uncertainty (bootstrap method)
-        predictions = []
-        for _ in range(100):  # Bootstrap samples
-            sample_indices = np.random.choice(len(dataset), size=len(dataset), replace=True)
-            sample_predictions = []
-
-            model.eval()
-            with torch.no_grad():
-                for idx in sample_indices[-10:]:  # Last 10 samples
-                    seq_x, _ = dataset[idx]
-                    seq_x = seq_x.unsqueeze(0)
-                    if self.gpu_services and torch.cuda.is_available():
-                        seq_x = seq_x.cuda()
-                    pred = model(seq_x).item()
-                    sample_predictions.append(pred)
-
-            predictions.append(np.mean(sample_predictions))
-
-        std_prediction = np.std(predictions)
-
-        # Confidence intervals
-        confidence_intervals = {}
-        for conf_level in self.confidence_levels:
-            z_score = 1.96 if conf_level == 0.95 else 1.28
-            margin = z_score * std_prediction
-            confidence_intervals[f'{int(conf_level*100)}%'] = {
-                'lower': prediction - margin,
-                'upper': prediction + margin
-            }
-
-        return {
-            'prediction': prediction,
-            'confidence_intervals': confidence_intervals,
-            'model_metrics': {
-                'bootstrap_std': std_prediction,
-                'sequence_length': sequence_length
-            }
-        }
-
-    def _prepare_features_and_target(self, data: pd.DataFrame, horizon: int) -> Tuple[pd.DataFrame, pd.Series]:
-        """Prepare features and target for forecasting."""
-        # Use close price as target (shifted by horizon)
-        target = data['close'].shift(-horizon).dropna()
-
-        # Features are all columns except target
-        features = data.drop(columns=['close'], errors='ignore')
-
-        # Align features with target
-        common_index = features.index.intersection(target.index)
-        X = features.loc[common_index]
-        y = target.loc[common_index]
-
-        return X, y
-
-    def _train_model(self, X: pd.DataFrame, y: pd.Series, model_type: str):
-        """Train a single model."""
-        model_config = self.model_configs[model_type]
-        model_class = model_config['class']
-        base_params = model_config['params']
-
-        # Use hyperparameter search if available
-        if self.hyperparameter_agent:
-            try:
-                best_params = self.hyperparameter_agent.search_hyperparameters(
-                    model_type, X, y, n_trials=20
-                )
-                params = {**base_params, **best_params}
-            except Exception as e:
-                logger.warning(f"Hyperparameter search failed: {e}")
-                params = base_params
-        else:
-            params = base_params
-
-        # Train model
-        model = model_class(**params)
-        model.fit(X, y)
-
-        return model
-
-    def _train_lstm_model(self, dataloader: DataLoader, input_size: int) -> LSTMModel:
-        """Train LSTM model."""
-        model = LSTMModel(input_size=input_size)
-
-        if self.gpu_services and torch.cuda.is_available():
-            model = model.cuda()
-
-        criterion = nn.MSELoss()
-        optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
-
-        # Training loop
-        model.train()
-        for epoch in range(50):  # Limited epochs for demo
-            epoch_loss = 0.0
-            for inputs, targets in dataloader:
-                if self.gpu_services and torch.cuda.is_available():
-                    inputs, targets = inputs.cuda(), targets.cuda()
-
-                optimizer.zero_grad()
-                outputs = model(inputs)
-                loss = criterion(outputs.squeeze(), targets)
-                loss.backward()
-                optimizer.step()
-
-                epoch_loss += loss.item()
-
-            if (epoch + 1) % 10 == 0:
-                logger.info(f"LSTM Epoch {epoch+1}/50, Loss: {epoch_loss/len(dataloader):.4f}")
-
-        return model
-
-    def _create_empty_forecast(self, symbol: str, horizon: int) -> Dict[str, Any]:
-        """Create empty forecast structure."""
-        return {
-            'symbol': symbol,
-            'horizon': horizon,
-            'prediction': None,
-            'confidence_intervals': {},
-            'error': 'Insufficient data for forecasting'
-        }
-
-    def evaluate_forecast_accuracy(self, symbol: str, test_period: str = '30d') -> Dict[str, float]:
+    def _compute_confidence_level(
+        self,
+        metrics: Dict[str, Any],
+        guardrail_flags: List[str],
+    ) -> Tuple[str, List[str]]:
         """
-        Evaluate forecast accuracy on historical data.
-
-        Args:
-            symbol: Stock symbol
-            test_period: Test period (e.g., '30d', '90d')
+        Map error metrics + guardrail flags to a discrete confidence level.
 
         Returns:
-            Accuracy metrics
+            Tuple of (confidence_level, reasons_list)
         """
-        logger.info(f"Evaluating forecast accuracy for {symbol} over {test_period}")
+        reasons = []
+        flags = set(guardrail_flags or [])
 
-        # Get historical data
-        data = self._prepare_forecast_data(symbol)
-        if data is None:
-            return {'error': 'No data available'}
+        # 1) Critical guardrails immediately cap to LOW
+        if flags & CRITICAL_GUARDRAILS:
+            reasons.append(
+                f"Critical guardrails active: {', '.join(sorted(flags & CRITICAL_GUARDRAILS))}."
+            )
+            reasons.append("Confidence forced to LOW due to potential data/pipeline issues.")
+            return "low", reasons
 
-        # Split into train/test
-        test_days = int(test_period.rstrip('d'))
-        split_date = data.index[-1] - timedelta(days=test_days)
+        # 2) Metric-based initial confidence
+        directional_acc = metrics.get("directional_accuracy")
+        smape = metrics.get("smape")
+        mae_vs_baseline = metrics.get("mae_vs_baseline")
 
-        train_data = data[data.index <= split_date]
-        test_data = data[data.index > split_date]
+        confidence = "low"
 
-        if len(test_data) < 10:
-            return {'error': 'Insufficient test data'}
+        # High confidence: good directional accuracy, low smape, not worse than baseline
+        if directional_acc is not None and smape is not None:
+            if (
+                directional_acc >= 0.60
+                and smape <= 0.15
+                and (mae_vs_baseline is None or mae_vs_baseline <= 1.0)
+            ):
+                confidence = "high"
+                reasons.append(
+                    f"Directional accuracy {directional_acc:.2f} and SMAPE {smape:.2f} indicate strong past performance."
+                )
+                if mae_vs_baseline is not None:
+                    reasons.append(
+                        f"MAE vs baseline {mae_vs_baseline:.2f} (≤ 1.0 is good) supports using this model."
+                    )
+            # Medium confidence: slightly weaker but still acceptable
+            elif directional_acc >= 0.55 and smape <= 0.20:
+                confidence = "medium"
+                reasons.append(
+                    f"Directional accuracy {directional_acc:.2f} and SMAPE {smape:.2f} indicate moderate reliability."
+                )
+            else:
+                confidence = "low"
+                reasons.append(
+                    f"Directional accuracy {directional_acc:.2f} and/or SMAPE {smape:.2f} suggest limited reliability."
+                )
+        else:
+            confidence = "low"
+            reasons.append("Missing key metrics (directional_accuracy and/or SMAPE). Set to LOW.")
 
-        # Generate forecasts for test period
-        predictions = []
-        actuals = []
+        # 3) Adjust for non-critical guardrails
+        non_critical_active = flags & NON_CRITICAL_GUARDRAILS
+        if non_critical_active:
+            reasons.append(
+                f"Non-critical guardrails active: {', '.join(sorted(non_critical_active))}."
+            )
+            if confidence == "high":
+                confidence = "medium"
+                reasons.append("Downgraded from HIGH to MEDIUM due to elevated risk regime.")
+            elif confidence == "medium":
+                confidence = "low"
+                reasons.append("Downgraded from MEDIUM to LOW due to elevated risk regime.")
+            else:
+                reasons.append("Confidence already LOW; no further downgrade.")
 
-        for i in range(len(test_data) - 1):  # Leave one day for prediction
-            test_subset = pd.concat([train_data, test_data.iloc[:i+1]])
+        return confidence, reasons
 
-            forecast = self.generate_forecast(symbol, horizon=1, model_type='ensemble')
-            if forecast['prediction'] is not None:
-                predictions.append(forecast['prediction'])
-                actuals.append(test_data.iloc[i+1]['close'])
+    def _generate_forecast_comment(
+        self,
+        horizon: int,
+        predicted_return: float,
+        confidence: str,
+        regime_info: Optional[Dict[str, Any]]
+    ) -> str:
+        """
+        Generate a short, natural language comment for a forecast.
+        """
+        # Magnitude description
+        if abs(predicted_return) < 0.005:  # < 0.5%
+            magnitude = "minimal"
+        elif abs(predicted_return) < 0.015:  # < 1.5%
+            magnitude = "modest"
+        elif abs(predicted_return) < 0.03:  # < 3%
+            magnitude = "moderate"
+        else:
+            magnitude = "significant"
 
-        if not predictions:
-            return {'error': 'No predictions generated'}
+        direction = "positive" if predicted_return > 0 else "negative"
 
-        # Calculate metrics
-        predictions = np.array(predictions)
-        actuals = np.array(actuals)
+        # Horizon context
+        if horizon == 1:
+            horizon_desc = "tomorrow"
+        elif horizon <= 5:
+            horizon_desc = f"next {horizon} days"
+        else:
+            horizon_desc = f"next {horizon} days"
 
-        mae = mean_absolute_error(actuals, predictions)
-        rmse = np.sqrt(mean_squared_error(actuals, predictions))
-        mape = np.mean(np.abs((actuals - predictions) / actuals)) * 100
+        # Base comment
+        comment = f"Model expects a {magnitude} {direction} move ({predicted_return:.2%}) over the {horizon_desc} with {confidence} confidence."
 
-        # Directional accuracy
-        actual_direction = np.sign(np.diff(actuals))
-        pred_direction = np.sign(np.diff(predictions))
-        directional_accuracy = np.mean(actual_direction == pred_direction) * 100
+        # Add regime context if relevant
+        if regime_info and regime_info.get("guardrail_flags"):
+            flags = set(regime_info["guardrail_flags"])
+            if "shock_regime_active" in flags:
+                comment += " Shock regime may amplify volatility."
+            elif "high_error_recently" in flags:
+                comment += " Recent forecast errors suggest caution."
 
-        return {
-            'mae': mae,
-            'rmse': rmse,
-            'mape': mape,
-            'directional_accuracy': directional_accuracy,
-            'n_predictions': len(predictions)
+        return comment
+
+    def _build_model_confidence_comment(
+        self,
+        metrics: Dict[str, Any],
+        confidence_reasons: List[str]
+    ) -> str:
+        """
+        Build the model confidence comment for risk assessment.
+        """
+        if confidence_reasons:
+            return " ".join(confidence_reasons)
+        else:
+            return "Model confidence assessment not available."
+
+    def _build_regime_comment(self, guardrail_flags: List[str]) -> str:
+        """
+        Build regime comment based on active guardrail flags.
+        """
+        flags = set(guardrail_flags or [])
+
+        if "shock_regime_active" in flags:
+            return "Shock regime is active; volatility and gap risk are elevated."
+        elif "news_shock_active" in flags:
+            return "Recent strong news flow may cause sudden moves beyond the model's typical error profile."
+        elif "high_error_recently" in flags:
+            return "Recent forecast errors were elevated; recent behavior may be less predictable than usual."
+        elif not flags:
+            return "No active guardrail flags; regime appears normal from the model's perspective."
+        else:
+            return f"Guardrail flags active: {', '.join(sorted(flags))}."
+
+    def _generate_scenario_notes(
+        self,
+        symbol: str,
+        horizon_forecasts: List[Dict[str, Any]],
+        risk_assessment: Dict[str, Any],
+        regime_info: Optional[Dict[str, Any]]
+    ) -> List[str]:
+        """
+        Generate scenario-style notes for human consideration.
+        """
+        notes = []
+
+        # Check for shock regime
+        guardrail_flags = set(risk_assessment.get("guardrail_flags", []))
+        has_shock_regime = "shock_regime_active" in guardrail_flags
+        has_high_error = "high_error_recently" in guardrail_flags
+
+        # Basic positioning note
+        notes.append(
+            "If someone wanted exposure to this symbol, position sizing should reflect the current confidence levels and guardrail flags."
+        )
+
+        # Shock regime specific notes
+        if has_shock_regime:
+            notes.append(
+                "Shock regime is active; sudden adverse moves are more likely, so wider stops or reduced leverage may be appropriate if seeking exposure."
+            )
+
+        # High error notes
+        if has_high_error:
+            notes.append(
+                "Recent forecast errors have been elevated, suggesting the model may be in a less predictable regime than usual."
+            )
+
+        # Forecast consistency notes
+        if len(horizon_forecasts) > 1:
+            directions = [f.get("predicted_return", 0) > 0 for f in horizon_forecasts]
+            if all(directions) or not any(directions):
+                consistency = "consistent"
+            else:
+                consistency = "mixed"
+
+            if consistency == "consistent":
+                direction_word = "positive" if directions[0] else "negative"
+                notes.append(
+                    f"Forecasts across horizons are {consistency} in their {direction_word} outlook."
+                )
+            else:
+                notes.append(
+                    "Forecasts across horizons show mixed signals; short-term and longer-term outlooks differ."
+                )
+
+        # Large move caveat
+        large_moves = [f for f in horizon_forecasts if abs(f.get("predicted_return", 0)) > 0.03]
+        if large_moves:
+            notes.append(
+                "Some forecasts suggest relatively large moves; these should be treated with extra caution given model uncertainty."
+            )
+
+        # Low confidence warning
+        low_confidence_forecasts = [f for f in horizon_forecasts if f.get("confidence") == "low"]
+        if low_confidence_forecasts:
+            horizons = [str(f["horizon"]) for f in low_confidence_forecasts]
+            notes.append(
+                f"Forecasts for horizon(s) {', '.join(horizons)} have low confidence and should be treated as highly uncertain."
+            )
+
+        return notes
+
+    def _log_forecast_output_for_audit(self, output_model: Dict[str, Any]) -> None:
+        """
+        Log the full ForecastAgentOutput JSON for backtesting/audit purposes.
+        
+        This creates structured logs that can be scraped by Loki or similar
+        log aggregation systems for later analysis.
+        """
+        import json
+        from datetime import datetime
+        
+        payload = {
+            "ts": datetime.utcnow().isoformat(),
+            "agent": "forecast_agent",
+            "data": output_model
         }
+        
+        # Log as structured JSON
+        logger.info("forecast_agent_output %s", json.dumps(payload))
 
-# Convenience functions
-def create_forecast_agent():
+    def interpret_forecast_bundle(
+        self,
+        forecast_bundle: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """
+        Convenience method to interpret a complete forecast bundle.
+
+        Expected bundle structure:
+        {
+            "symbol": "AAPL",
+            "forecasts": [...],  # List of forecast objects
+            "error_metrics": {...},  # Error metrics dict
+            "regime_and_guardrail_info": {...}  # Optional regime info
+        }
+        """
+        return self.interpret_forecasts(
+            symbol=forecast_bundle["symbol"],
+            forecasts=forecast_bundle["forecasts"],
+            error_metrics=forecast_bundle["error_metrics"],
+            regime_and_guardrail_info=forecast_bundle.get("regime_and_guardrail_info")
+        )
+
+
+# Convenience functions for integration
+def create_forecast_agent(llm_client=None):
     """Create and configure forecast agent."""
-    return ForecastAgent()
+    return ForecastAgent(llm_client=llm_client)
 
-def generate_symbol_forecast(symbol: str, horizon: int = 1, model_type: str = 'ensemble'):
-    """Generate forecast for a symbol with default settings."""
-    agent = create_forecast_agent()
-    return agent.generate_forecast(symbol, horizon, model_type)
 
-def evaluate_forecast_performance(symbol: str, test_period: str = '30d'):
-    """Evaluate forecast accuracy for a symbol."""
-    agent = create_forecast_agent()
-    return agent.evaluate_forecast_accuracy(symbol, test_period)
+def interpret_symbol_forecasts(
+    symbol: str,
+    forecasts: List[Dict[str, Any]],
+    error_metrics: Dict[str, Any],
+    regime_info: Optional[Dict[str, Any]] = None,
+    llm_client=None
+) -> Dict[str, Any]:
+    """
+    Convenience function to interpret forecasts for a symbol.
+    """
+    agent = create_forecast_agent(llm_client=llm_client)
+    return agent.interpret_forecasts(symbol, forecasts, error_metrics, regime_info)
+
+
+def interpret_forecast_bundle(
+    forecast_bundle: Dict[str, Any],
+    llm_client=None
+) -> Dict[str, Any]:
+    """
+    Convenience function to interpret a complete forecast bundle.
+    """
+    agent = create_forecast_agent(llm_client=llm_client)
+    return agent.interpret_forecast_bundle(forecast_bundle)

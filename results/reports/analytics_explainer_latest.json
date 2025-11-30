@@ -1,0 +1,48 @@
+{
+  "global_summary": "The stock forecasting system is currently performing within reasonable ranges, with low mean errors across various metrics. However, the directional accuracy is notably low, indicating challenges in predicting the correct direction of stock movements.",
+  "metric_explanations": {
+    "mae": "Mean Absolute Error (MAE) measures the average magnitude of errors in predictions, without considering their direction. A lower MAE indicates better predictive accuracy.",
+    "mape": "Mean Absolute Percentage Error (MAPE) expresses prediction errors as a percentage of actual values. It helps gauge the accuracy relative to the size of the actual values, with lower percentages indicating better performance.",
+    "smape": "Symmetric Mean Absolute Percentage Error (SMAPE) is similar to MAPE but adjusts for scale, providing a more balanced view of prediction accuracy. It is particularly useful when actual values can be close to zero.",
+    "swase": "Symmetric Weighted Absolute Scaled Error (SWASE) is a scaled version of the absolute error that accounts for the variability in the data. It helps to understand how well the model performs relative to the variability of the actual values."
+  },
+  "regime_insights": [
+    {
+      "regime": "normal",
+      "performance_comment": "The model shows a slight increase in MAE and MAPE during normal market conditions, suggesting some degradation in performance.",
+      "risk_comment": "The low directional accuracy indicates a significant risk in predicting stock movements accurately."
+    }
+  ],
+  "symbol_outliers": [],
+  "feature_insights": {
+    "overall_top_features": [
+      {
+        "name": "peer_mean_ret_10d",
+        "importance_comment": "This feature is expected to provide insights into how similar stocks have performed recently, which can influence predictions."
+      }
+    ],
+    "shock_regime_top_features": []
+  },
+  "recommendations": [
+    {
+      "category": "monitoring",
+      "action": "Increase monitoring of directional accuracy metrics.",
+      "reason": "Given the low directional accuracy, it is crucial to understand the factors contributing to this issue."
+    },
+    {
+      "category": "model_family",
+      "action": "Consider exploring different model families that may better capture market dynamics during periods of volatility.",
+      "reason": "The current model may not be adequately addressing the complexities of stock movements, especially in shock regimes."
+    },
+    {
+      "category": "hpo",
+      "action": "Increase the hyperparameter optimization (HPO) budget for the model.",
+      "reason": "Enhancing the model's tuning could lead to improvements in predictive performance."
+    },
+    {
+      "category": "data_quality",
+      "action": "Review the data quality and feature engineering processes.",
+      "reason": "Ensuring high-quality data and relevant features is essential for improving model accuracy."
+    }
+  ]
+}

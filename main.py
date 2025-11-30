@@ -34,7 +34,7 @@ import argparse
 def parse_args():
     """Parse command line arguments"""
     parser = argparse.ArgumentParser(description='Agentic Forecast System')
-    parser.add_argument('--task', choices=['full'], default='full',
+    parser.add_argument('--task', choices=['full', 'llm_analytics_only'], default='full',
                        help='Task to run (default: full)')
     parser.add_argument('--run_type', choices=['DAILY', 'WEEKEND_HPO', 'BACKTEST'],
                        default='DAILY', help='Type of run (default: DAILY)')
@@ -241,17 +241,28 @@ def main():
     
     print(f"Loaded {len(symbols)} symbols from IBKR watchlist for processing")
     
-    # Build initial state with run_type
-    initial_state = build_initial_state(symbols, config, args.run_type)
-    
-    for output in app.stream(initial_state):
-        for key, value in output.items():
-            logger.info(f"Output from node '{key}':")
-            logger.info("---")
-            logger.info(str(value))
-        logger.info("\n---\n")
+    # Handle different tasks
+    if args.task == "full":
+        # Build initial state with run_type
+        initial_state = build_initial_state(symbols, config, args.run_type)
+        
+        for output in app.stream(initial_state):
+            for key, value in output.items():
+                logger.info(f"Output from node '{key}':")
+                logger.info("---")
+                logger.info(str(value))
+            logger.info("\n---\n")
 
-    logger.info("Agentic workflow finished.")
+        logger.info("Agentic workflow finished.")
+        
+    elif args.task == "llm_analytics_only":
+        from src.analytics.llm_analytics_orchestrator import run_llm_analytics_explainer
+        print("Running LLM analytics explainer only...")
+        explanation = run_llm_analytics_explainer()
+        print("LLM analytics explainer completed.")
+        print(f"Summary keys: {list(explanation.keys())}")
+    else:
+        raise ValueError(f"Unknown task: {args.task}")
 
 if __name__ == "__main__":
     main()

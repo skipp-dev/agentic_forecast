@@ -21,6 +21,27 @@ import time
 from typing import Dict, List, Any, Optional, Tuple
 import sqlite3
 
+import os
+import sys
+import pandas as pd
+import numpy as np
+from pathlib import Path
+from datetime import datetime, timedelta
+import logging
+import json
+import requests
+import subprocess
+import threading
+import time
+from typing import Dict, List, Any, Optional, Tuple
+import sqlite3
+
+try:
+    import psutil
+    HAS_PSUTIL = True
+except ImportError:
+    HAS_PSUTIL = False
+
 # Add paths
 sys.path.append(os.path.dirname(__file__))
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
@@ -550,6 +571,92 @@ class QualityAssuranceAgent:
 
     def _check_pipeline_health(self) -> Dict[str, Any]:
         """Check if pipelines are running or stuck."""
+        try:
+            import psutil
+            import os
+
+            current_pid = os.getpid()
+            python_processes = []
+
+            # Get all Python processes
+            for proc in psutil.process_iter(['pid', 'name', 'cmdline', 'create_time']):
+                try:
+                    if proc.info['name'] and 'python' in proc.info['name'].lower():
+                        if proc.info['pid'] != current_pid:  # Exclude this quality check process
+                            cmdline = proc.info.get('cmdline', [])
+                            create_time = proc.info.get('create_time', 0)
+                            runtime_hours = (time.time() - create_time) / 3600
+
+                            python_processes.append({
+                                'pid': proc.info['pid'],
+                                'cmdline': ' '.join(cmdline) if cmdline else '',
+                                'runtime_hours': runtime_hours,
+                                'create_time': create_time
+                            })
+                except (psutil.NoSuchProcess, psutil.AccessDenied):
+                    continue
+
+            # Check for hanging processes
+            hanging_processes = []
+            long_running_processes = []
+
+            for proc in python_processes:
+                # Check for main.py processes that have been running too long
+                if 'main.py' in proc['cmdline']:
+                    if proc['runtime_hours'] > self.thresholds['max_pipeline_runtime'] / 3600:
+                        hanging_processes.append({
+                            'pid': proc['pid'],
+                            'runtime_hours': round(proc['runtime_hours'], 1),
+                            'cmdline': proc['cmdline'][:100] + '...' if len(proc['cmdline']) > 100 else proc['cmdline']
+                        })
+                    elif proc['runtime_hours'] > 1.0:  # Flag processes running > 1 hour
+                        long_running_processes.append({
+                            'pid': proc['pid'],
+                            'runtime_hours': round(proc['runtime_hours'], 1),
+                            'cmdline': proc['cmdline'][:100] + '...' if len(proc['cmdline']) > 100 else proc['cmdline']
+                        })
+
+            # Determine status and severity
+            if hanging_processes:
+                return {
+                    'status': 'failed',
+                    'message': f'Found {len(hanging_processes)} hanging pipeline processes exceeding {self.thresholds["max_pipeline_runtime"]/3600:.1f} hours',
+                    'severity': 'critical',
+                    'hanging_processes': hanging_processes,
+                    'long_running_processes': long_running_processes
+                }
+            elif long_running_processes:
+                return {
+                    'status': 'warning',
+                    'message': f'Found {len(long_running_processes)} long-running pipeline processes (>1 hour)',
+                    'severity': 'medium',
+                    'long_running_processes': long_running_processes
+                }
+            elif len(python_processes) > 3:  # More than 3 Python processes might indicate issues
+                return {
+                    'status': 'warning',
+                    'message': f'{len(python_processes)} Python processes running - monitor for potential issues',
+                    'severity': 'low',
+                    'process_count': len(python_processes)
+                }
+            else:
+                return {
+                    'status': 'passed',
+                    'message': 'Pipeline health check passed'
+                }
+
+        except ImportError:
+            # Fallback to subprocess method if psutil not available
+            return self._check_pipeline_health_fallback()
+        except Exception as e:
+            return {
+                'status': 'error',
+                'message': f'Error checking pipeline health: {e}',
+                'severity': 'medium'
+            }
+
+    def _check_pipeline_health_fallback(self) -> Dict[str, Any]:
+        """Fallback pipeline health check when psutil is not available."""
         try:
             # Check for running Python processes related to the system
             result = subprocess.run(

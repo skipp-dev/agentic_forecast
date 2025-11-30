@@ -42,6 +42,21 @@ $PrometheusConf = "C:\Users\spreu\Documents\agentic_forecast\monitoring\promethe
 $Python = "python"
 
 ############################################################
+# ENVIRONMENT VARIABLES – LANGCHAIN/LANGSMITH CONFIG
+############################################################
+
+# Force EU endpoint for LangSmith (fixes 403 Forbidden with US endpoint)
+$env:LANGSMITH_ENDPOINT = "https://eu.smith.langchain.com"
+$env:LANGCHAIN_ENDPOINT = "https://eu.smith.langchain.com"
+
+# Enable tracing (set to "true" to enable, "false" to disable)
+$env:LANGCHAIN_TRACING_V2 = "true"
+
+# API key (set via env var or replace with your actual key)
+# $env:LANGSMITH_API_KEY = "your-api-key-here"
+# $env:LANGCHAIN_API_KEY = "your-api-key-here"
+
+############################################################
 # DO NOT EDIT BELOW THIS LINE (unless you know what you're doing)
 ############################################################
 
