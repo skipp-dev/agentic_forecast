@@ -1,0 +1,52 @@
+# LLM Agent Configuration - Operational Mapping
+# Maps agent roles to concrete classes, models, and prompt keys
+# This config drives the LLMAgentFactory for declarative LLM usage
+
+llm_agents:
+  analytics_explainer:
+    class: LLMAnalyticsExplainerAgent
+    model: gpt-4o-mini
+    system_prompt_key: analytics_explainer
+    user_prompt_key: analytics_explainer_user_template
+
+  hpo_planner:
+    class: LLMHPOPlannerAgent
+    model: o4-mini
+    system_prompt_key: hpo_planner
+    user_prompt_key: hpo_planner_user_template
+
+  news_enricher:
+    class: LLMNewsFeatureAgent
+    model: o4-mini
+    system_prompt_key: news_enrichment
+    user_prompt_key: news_enrichment_user_template
+
+  research_agent:
+    class: OpenAIResearchAgent
+    model: o4-mini
+    system_prompt_key: research_agent
+    user_prompt_key: research_agent_user_template
+
+  reporting_agent:
+    class: LLMReportingAgent
+    model: gpt-4o-mini
+    system_prompt_key: reporting_agent
+    user_prompt_key: reporting_agent_user_template
+
+  explainability_agent:
+    class: LLMExplainabilityAgent
+    model: gpt-4o-mini
+    system_prompt_key: explainability_agent
+    user_prompt_key: explainability_agent_user_template
+
+  notification_agent:
+    class: LLMNotificationAgent
+    model: gpt-4o-mini
+    system_prompt_key: notification_agent
+    user_prompt_key: notification_agent_user_template
+
+  strategy_planner:
+    class: LLMStrategyPlannerAgent
+    model: o4-mini
+    system_prompt_key: strategy_planner
+    user_prompt_key: strategy_planner_user_template
