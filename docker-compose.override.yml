@@ -1,0 +1,102 @@
+# docker-compose.override.yml
+# Docker optimization and build configuration
+# This file contains build optimizations, caching, and service configurations
+
+version: '3.8'
+
+# BuildKit configuration for faster builds
+services:
+  ib-forecast:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: production
+      args:
+        BUILDKIT_INLINE_CACHE: 1
+      cache_from:
+        - agentic_forecast-ib-forecast:latest
+      tags:
+        - agentic_forecast-ib-forecast:latest
+    # BuildKit and resource optimization
+    environment:
+      - DOCKER_BUILDKIT=1
+      - BUILDKIT_PROGRESS=plain
+      - BUILDKIT_INLINE_CACHE=1
+    # Memory limits for build
+    deploy:
+      resources:
+        limits:
+          memory: 4G
+        reservations:
+          memory: 2G
+    # Health check configuration
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    # Restart policy
+    restart: unless-stopped
+    # Logging configuration
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  prometheus:
+    # Override ports to avoid conflicts
+    ports:
+      - "9091:9090"
+    # Volume for persistent data
+    volumes:
+      - prometheus_data:/prometheus
+    # Restart policy
+    restart: unless-stopped
+    # Logging
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  grafana:
+    # Override ports to avoid conflicts
+    ports:
+      - "3001:3000"
+    # Environment for Prometheus datasource
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_USERS_ALLOW_SIGN_UP=false
+      - GF_INSTALL_PLUGINS=grafana-piechart-panel
+    # Persistent volumes
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    # Restart policy
+    restart: unless-stopped
+    # Logging
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    # Dependencies
+    depends_on:
+      prometheus:
+        condition: service_started
+
+# Named volumes for persistence
+volumes:
+  prometheus_data:
+    driver: local
+  grafana_data:
+    driver: local
+
+# Networks
+networks:
+  default:
+    name: agentic_forecast_network
+    driver: bridge
