@@ -33,7 +33,7 @@ ibkr:
 # --- Scaling Configuration ---
 scaling:
   # Maximum number of symbols to process in a single run
-  max_symbols: -1  # Set to -1 for unlimited (ALL symbols)
+  max_symbols: 2  # Limited for testing
 
   # Batch processing settings - Maximum throughput
   batch_size: 100  # Maximum symbols per batch

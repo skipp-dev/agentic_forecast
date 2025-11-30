@@ -58,7 +58,7 @@ def forecasting_node(state: GraphState) -> GraphState:
         state['errors'].append("No features available for forecasting")
         return state
     
-    horizon = 24
+    horizon = 3
     
     forecasts = {}
     
@@ -278,8 +278,13 @@ def forecasting_node(state: GraphState) -> GraphState:
                         else:
                             column_name = model_result.model_family
                         
-                        # Prepare future dataframe for prediction
-                        futr_df = nf_inst.make_future_dataframe(df=train_df, h=horizon)
+                        # Prepare future dataframe for prediction - ensure it matches training format
+                        # Use the same unique_id format as training: symbol_scope.replace(":", "_")
+                        unique_id_formatted = symbol.replace(":", "_")
+                        futr_df = pd.DataFrame({
+                            'unique_id': [unique_id_formatted] * horizon,
+                            'ds': pd.date_range(start=train_df['ds'].max() + pd.Timedelta(days=1), periods=horizon, freq='D')
+                        })
                         
                         preds_val = nf_inst.predict(futr_df=futr_df)
                         
@@ -293,7 +298,13 @@ def forecasting_node(state: GraphState) -> GraphState:
                         
                         # Fit on full data for future forecast
                         nf_inst.fit(df=full_df)
-                        preds_future = nf_inst.predict()
+                        # Create future dataframe with same format as training
+                        unique_id_formatted = symbol.replace(":", "_")
+                        futr_future_df = pd.DataFrame({
+                            'unique_id': [unique_id_formatted] * horizon,
+                            'ds': pd.date_range(start=full_df['ds'].max() + pd.Timedelta(days=1), periods=horizon, freq='D')
+                        })
+                        preds_future = nf_inst.predict(futr_df=futr_future_df)
                         if model_family == "Ensemble":
                             pred_future = preds_future.select_dtypes(include=[float, int]).mean(axis=1).values
                         else:
