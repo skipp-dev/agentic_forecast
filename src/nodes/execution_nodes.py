@@ -281,34 +281,73 @@ def forecasting_node(state: GraphState) -> GraphState:
                         # Prepare future dataframe for prediction - ensure it matches training format
                         # Use the same unique_id format as training: symbol_scope.replace(":", "_")
                         unique_id_formatted = symbol.replace(":", "_")
+
+                        # For NeuralForecast models, we need to create future dataframe that matches training structure
+                        # Get the last date from training and create future dates with same frequency
+                        last_train_date = train_df['ds'].max()
+                        future_dates = pd.date_range(start=last_train_date + pd.Timedelta(days=1),
+                                                   periods=horizon, freq='D')
+
+                        # Create future dataframe with same unique_id as training
                         futr_df = pd.DataFrame({
                             'unique_id': [unique_id_formatted] * horizon,
-                            'ds': pd.date_range(start=train_df['ds'].max() + pd.Timedelta(days=1), periods=horizon, freq='D')
+                            'ds': future_dates
                         })
-                        
-                        preds_val = nf_inst.predict(futr_df=futr_df)
-                        
-                        if model_result.model_family == "Ensemble":
-                            y_pred = preds_val.select_dtypes(include=[float, int]).mean(axis=1).values
-                        else:
-                            y_pred = preds_val[column_name].values
-                        mape_val = model_result.best_val_mape
-                        mae_val = model_result.best_val_mae
-                        model_family = model_result.model_family
-                        
-                        # Fit on full data for future forecast
-                        nf_inst.fit(df=full_df)
-                        # Create future dataframe with same format as training
-                        unique_id_formatted = symbol.replace(":", "_")
-                        futr_future_df = pd.DataFrame({
-                            'unique_id': [unique_id_formatted] * horizon,
-                            'ds': pd.date_range(start=full_df['ds'].max() + pd.Timedelta(days=1), periods=horizon, freq='D')
-                        })
-                        preds_future = nf_inst.predict(futr_df=futr_future_df)
-                        if model_family == "Ensemble":
-                            pred_future = preds_future.select_dtypes(include=[float, int]).mean(axis=1).values
-                        else:
-                            pred_future = preds_future[column_name].values
+
+                        # Add any exogenous variables if they exist in training data
+                        # NeuralForecast expects the same columns as training
+                        if len(train_df.columns) > 2:  # More than unique_id, ds, y
+                            exogenous_cols = [col for col in train_df.columns if col not in ['unique_id', 'ds', 'y']]
+                            for col in exogenous_cols:
+                                if col in train_df.columns:
+                                    # Use last known value for exogenous variables
+                                    last_val = train_df[col].iloc[-1]
+                                    futr_df[col] = last_val
+
+                        try:
+                            preds_val = nf_inst.predict(futr_df=futr_df)
+                            
+                            if model_result.model_family == "Ensemble":
+                                y_pred = preds_val.select_dtypes(include=[float, int]).mean(axis=1).values
+                            else:
+                                y_pred = preds_val[column_name].values
+                            mape_val = model_result.best_val_mape
+                            mae_val = model_result.best_val_mae
+                            model_family = model_result.model_family
+                            
+                            # Fit on full data for future forecast
+                            nf_inst.fit(df=full_df)
+                            # Create future dataframe with same format as training
+                            unique_id_formatted = symbol.replace(":", "_")
+
+                            # Get the last date from full data and create future dates
+                            last_full_date = full_df['ds'].max()
+                            future_dates = pd.date_range(start=last_full_date + pd.Timedelta(days=1),
+                                                       periods=horizon, freq='D')
+
+                            futr_future_df = pd.DataFrame({
+                                'unique_id': [unique_id_formatted] * horizon,
+                                'ds': future_dates
+                            })
+
+                            # Add any exogenous variables if they exist in training data
+                            if len(full_df.columns) > 2:  # More than unique_id, ds, y
+                                exogenous_cols = [col for col in full_df.columns if col not in ['unique_id', 'ds', 'y']]
+                                for col in exogenous_cols:
+                                    if col in full_df.columns:
+                                        # Use last known value for exogenous variables
+                                        last_val = full_df[col].iloc[-1]
+                                        futr_future_df[col] = last_val
+
+                            preds_future = nf_inst.predict(futr_df=futr_future_df)
+                            if model_family == "Ensemble":
+                                pred_future = preds_future.select_dtypes(include=[float, int]).mean(axis=1).values
+                            else:
+                                pred_future = preds_future[column_name].values
+                        except Exception as e:
+                            logger.error(f"Error predicting with {model_result.model_family} for {symbol}: {e}")
+                            # Skip this model and continue with others
+                            continue
             else:
                 # Fallback: train default BaselineLinear
                 from neuralforecast.models import NLinear
