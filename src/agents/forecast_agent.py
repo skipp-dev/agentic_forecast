@@ -101,12 +101,16 @@ class ForecastAgent:
             })
 
         # Build risk assessment
+        trust_score, trust_reasons = self._compute_trust_score(error_metrics, guardrail_flags)
+        
         risk_assessment = {
             "model_confidence_comment": self._build_model_confidence_comment(
                 error_metrics, confidence_reasons
             ),
             "regime_comment": self._build_regime_comment(guardrail_flags),
-            "guardrail_flags": guardrail_flags
+            "guardrail_flags": guardrail_flags,
+            "trust_score": trust_score,
+            "trust_reasons": trust_reasons
         }
 
         # Generate scenario notes
@@ -132,6 +136,80 @@ class ForecastAgent:
         self._log_forecast_output_for_audit(result)
 
         return result
+
+    def _compute_trust_score(
+        self,
+        metrics: Dict[str, Any],
+        guardrail_flags: List[str]
+    ) -> Tuple[float, List[str]]:
+        """
+        Compute a deterministic trust score (0.0 - 1.0) based on metrics and guardrails.
+        
+        Score components:
+        - Base score: 1.0
+        - Critical guardrails: -1.0 (forces 0.0)
+        - Non-critical guardrails: -0.2 each
+        - Poor directional accuracy (< 0.55): -0.3
+        - High SMAPE (> 0.20): -0.2
+        - Missing metrics: -0.5
+        
+        Returns:
+            Tuple of (trust_score, reasons)
+        """
+        score = 1.0
+        reasons = []
+        flags = set(guardrail_flags or [])
+        
+        # 1. Critical Guardrails (Immediate zero)
+        if flags & CRITICAL_GUARDRAILS:
+            active = sorted(flags & CRITICAL_GUARDRAILS)
+            reasons.append(f"Critical guardrails active: {', '.join(active)} (-1.0)")
+            return 0.0, reasons
+            
+        # 2. Non-Critical Guardrails
+        non_critical_active = flags & NON_CRITICAL_GUARDRAILS
+        for flag in non_critical_active:
+            penalty = 0.2
+            score -= penalty
+            reasons.append(f"Guardrail '{flag}' active (-{penalty})")
+            
+        # 3. Metric Sanity & Performance
+        da = metrics.get("directional_accuracy")
+        smape = metrics.get("smape")
+        
+        if da is None or smape is None:
+            penalty = 0.5
+            score -= penalty
+            reasons.append(f"Missing key metrics (DA/SMAPE) (-{penalty})")
+        else:
+            # Directional Accuracy penalties
+            if da < 0.50:
+                penalty = 0.4
+                score -= penalty
+                reasons.append(f"Very poor directional accuracy ({da:.2f} < 0.50) (-{penalty})")
+            elif da < 0.55:
+                penalty = 0.2
+                score -= penalty
+                reasons.append(f"Poor directional accuracy ({da:.2f} < 0.55) (-{penalty})")
+                
+            # SMAPE penalties
+            if smape > 0.30:
+                penalty = 0.3
+                score -= penalty
+                reasons.append(f"Very high SMAPE ({smape:.2f} > 0.30) (-{penalty})")
+            elif smape > 0.20:
+                penalty = 0.1
+                score -= penalty
+                reasons.append(f"High SMAPE ({smape:.2f} > 0.20) (-{penalty})")
+
+        # 4. Regime Adjustments (if not already covered by flags)
+        # If we have specific regime info in metrics that isn't a flag, use it here.
+        # Currently relying on flags like 'shock_regime_active'.
+        
+        # Clamp score to [0.0, 1.0]
+        final_score = max(0.0, min(1.0, score))
+        
+        return final_score, reasons
 
     def _compute_confidence_level(
         self,

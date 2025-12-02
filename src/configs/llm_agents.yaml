@@ -1,0 +1,35 @@
+analytics_explainer:
+  model: gpt-4o-mini
+  temperature: 0.1
+  system_prompt_key: analytics_explainer_system
+  user_prompt_key: analytics_explainer_user
+
+hpo_planner:
+  model: o4-mini
+  temperature: 0.0
+  system_prompt_key: hpo_planner_system
+  user_prompt_key: hpo_planner_user
+
+news_enricher:
+  model: gpt-4o-mini
+  temperature: 0.2
+  system_prompt_key: news_enricher_system
+  user_prompt_key: news_enricher_user
+
+research_agent:
+  model: gpt-4o
+  temperature: 0.3
+  system_prompt_key: research_agent_system
+  user_prompt_key: research_agent_user
+
+reporting_agent:
+  model: gpt-4o-mini
+  temperature: 0.1
+  system_prompt_key: reporting_agent_system
+  user_prompt_key: reporting_agent_user
+
+explainability_agent:
+  model: gpt-4o-mini
+  temperature: 0.1
+  system_prompt_key: explainability_agent_system
+  user_prompt_key: explainability_agent_user

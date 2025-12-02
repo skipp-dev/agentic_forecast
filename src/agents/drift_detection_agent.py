@@ -8,13 +8,13 @@ class DriftDetectionAgent:
         Detects data drift by comparing the mean and standard deviation of the close price
         for the last 30 days with the previous 30 days.
         """
-        print("🕵️‍ Running drift detection...")
+        print("[INFO] Running drift detection...")
         
         drift_results = []
         
         for symbol, df in data.items():
             if len(df) < 60:
-                print(f"⚠️ Not enough data for drift detection on {symbol}. Skipping.")
+                print(f"[WARN] Not enough data for drift detection on {symbol}. Skipping.")
                 continue
 
             # Ensure the DataFrame is sorted by date (handle both index and column cases)

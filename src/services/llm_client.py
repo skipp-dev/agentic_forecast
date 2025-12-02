@@ -1,4 +1,4 @@
-# src/llm/openai_client.py
+# src/services/llm_client.py
 import os
 from typing import Optional
 from openai import OpenAI

@@ -27,8 +27,8 @@ def anomaly_detection_node(state: GraphState) -> GraphState:
     # For now, just print the detected anomalies
     for symbol, anomaly_df in anomalies.items():
         if not anomaly_df.empty:
-            print(f"🚨 Detected {len(anomaly_df)} anomalies for {symbol}:")
+            print(f"[ALERT] Detected {len(anomaly_df)} anomalies for {symbol}:")
             print(anomaly_df)
 
-    print("✅ Anomaly detection complete.")
+    print("[OK] Anomaly detection complete.")
     return state

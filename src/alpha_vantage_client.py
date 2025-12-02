@@ -67,11 +67,18 @@ class AlphaVantageClient:
         self.call_times = [t for t in self.call_times if current_time - t < self.time_window]
 
         if len(self.call_times) >= self.rate_limit:
-            sleep_time = self.time_window - (current_time - self.call_times[0])
+            # Calculate sleep time based on the oldest call in the window
+            # We need to wait until the oldest call expires
+            oldest_call_time = self.call_times[0]
+            sleep_time = self.time_window - (current_time - oldest_call_time) + 0.1 # Add buffer
+            
             if sleep_time > 0:
-                logger.warning(f"Rate limit reached. Sleeping for {sleep_time:.2f} seconds.")
+                logger.warning(f"Rate limit reached ({len(self.call_times)} calls). Sleeping for {sleep_time:.2f} seconds.")
                 time.sleep(sleep_time)
-                self.call_times = []  # Reset after sleeping
+                
+                # After sleeping, update current_time and filter again to ensure we are compliant
+                current_time = time.time()
+                self.call_times = [t for t in self.call_times if current_time - t < self.time_window]
 
         self.call_times.append(current_time)
 

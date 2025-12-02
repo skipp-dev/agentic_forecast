@@ -28,5 +28,5 @@ def reporting_node(state: GraphState) -> GraphState:
             print(f"    Sample Size: {results.get('sample_size', 'N/A')}")
             print("    SHAP analysis provides insights into feature contributions to predictions.")
     
-    print("✅ Generated report.")
+    print("[OK] Generated report.")
     return state

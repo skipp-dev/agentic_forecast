@@ -15,7 +15,7 @@ from analytics.metrics_payload_builder import (
     build_metrics_payload_from_health,
 )
 from src.analytics.llm_report_builder import build_markdown_from_explanation
-from agents.llm_analytics_agent import LLMAnalyticsExplainerAgent
+from src.agents.analytics_explainer import LLMAnalyticsExplainerAgent
 
 
 DEFAULT_HEALTH_PATH = "results/reports/daily_forecast_health_latest.json"

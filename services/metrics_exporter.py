@@ -178,6 +178,13 @@ def build_metrics_registry() -> CollectorRegistry:
         registry=registry,
     )
 
+    forecast_trust_score = Gauge(
+        "forecast_trust_score",
+        "Deterministic trust score per symbol (0.0-1.0)",
+        ["symbol"],
+        registry=registry,
+    )
+
     forecast_guardrail_flag = Gauge(
         "forecast_guardrail_flag",
         "Guardrail flags per symbol (1=active, 0=inactive)",
@@ -387,6 +394,10 @@ def build_metrics_registry() -> CollectorRegistry:
             # else remains 0 for low
             
             forecast_confidence_level.labels(symbol=symbol).set(confidence_level)
+
+            # Set trust score
+            trust_score = float(forecast_agent_output.get("risk_assessment", {}).get("trust_score", 0.0))
+            forecast_trust_score.labels(symbol=symbol).set(trust_score)
             
             # Set predicted returns per horizon
             horizon_forecasts = forecast_agent_output.get("horizon_forecasts", [])

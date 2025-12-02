@@ -1,6 +1,6 @@
-from src.agents.drift_detection_agent import DriftDetectionAgent
-from src.agents.risk_assessment_agent import RiskAssessmentAgent
-from src.graphs.state import GraphState
+from ..agents.drift_detection_agent import DriftDetectionAgent
+from ..agents.risk_assessment_agent import RiskAssessmentAgent
+from ..graphs.state import GraphState
 
 def drift_detection_node(state: GraphState) -> GraphState:
     """
@@ -20,12 +20,12 @@ def drift_detection_node(state: GraphState) -> GraphState:
     
     if drift_metrics['drift_detected'].any():
         state['drift_detected'] = True
-        print("🚨 Drift detected!")
+        print("[ALERT] Drift detected!")
     else:
         state['drift_detected'] = False
-        print("✅ No significant drift detected.")
+        print("[OK] No significant drift detected.")
         
-    print(f"✅ Drift detection complete.")
+    print(f"[OK] Drift detection complete.")
     return state
 
 def risk_assessment_node(state: GraphState) -> GraphState:
@@ -44,5 +44,5 @@ def risk_assessment_node(state: GraphState) -> GraphState:
     else:
         state['risk_kpis'] = {}
     
-    print(f"✅ Risk assessment complete.")
+    print(f"[OK] Risk assessment complete.")
     return state

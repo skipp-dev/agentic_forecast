@@ -7,7 +7,7 @@ import logging
 import time
 from collections import defaultdict
 
-from src.llm.openai_client import OpenAILLMClient
+from src.services.llm_client import OpenAILLMClient
 
 logger = logging.getLogger(__name__)
 

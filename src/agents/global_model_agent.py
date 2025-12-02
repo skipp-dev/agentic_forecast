@@ -179,6 +179,7 @@ class GlobalModelAgent:
         self.learning_rate = 0.001
         self.batch_size = 32
         self.num_epochs = 10  # Reduced from 50 for faster testing
+        self.feature_cols = None
 
         logger.info(f"Initialized GlobalModelAgent with {model_type} on {self.device}")
 
@@ -203,6 +204,9 @@ class GlobalModelAgent:
                 'returns_1d', 'returns_5d', 'volatility_5d', 'volatility_10d',
                 'sma_20', 'sma_50'
             ]
+        
+        # Store the feature columns (excluding target) for later use
+        self.feature_cols = [col for col in feature_cols if col != 'close']
 
         for symbol, data in symbol_data.items():
             if data.empty or len(data) < self.lookback + self.horizon:
@@ -349,7 +353,12 @@ class GlobalModelAgent:
             return np.array([])
 
         # Use the exact features that were used during training
-        feature_cols = ['open', 'high', 'low', 'volume', 'returns_1d', 'returns_5d', 'volatility_5d', 'sma_20', 'sma_50']
+        if feature_cols is None:
+            if self.feature_cols is None:
+                # Fallback to default if not set
+                feature_cols = ['open', 'high', 'low', 'volume', 'returns_1d', 'returns_5d', 'volatility_5d', 'volatility_10d', 'sma_20', 'sma_50']
+            else:
+                feature_cols = self.feature_cols
 
         # Create dataset for prediction
         dataset = TimeSeriesDataset(features_df, self.lookback, self.horizon, 'close', feature_cols)
@@ -382,7 +391,8 @@ class GlobalModelAgent:
             'hidden_size': self.hidden_size,
             'num_layers': self.num_layers,
             'lookback': self.lookback,
-            'horizon': self.horizon
+            'horizon': self.horizon,
+            'feature_cols': self.feature_cols
         }, path)
 
         logger.info(f"Model saved to {path}")
@@ -412,6 +422,7 @@ class GlobalModelAgent:
         # Restore parameters
         self.lookback = checkpoint['lookback']
         self.horizon = checkpoint['horizon']
+        self.feature_cols = checkpoint.get('feature_cols')
 
         logger.info(f"Model loaded from {path}")
 

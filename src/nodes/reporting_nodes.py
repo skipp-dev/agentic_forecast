@@ -2,7 +2,7 @@ import pandas as pd
 from ..graphs.state import GraphState
 import os
 from typing import Dict, Any
-from agents.llm_reporting_agent import LLMReportingAgent, ReportingInput
+from ..agents.reporting_agent import LLMReportingAgent, ReportingInput
 
 
 def generate_report_node(state: GraphState) -> GraphState:
@@ -35,12 +35,12 @@ def generate_report_node(state: GraphState) -> GraphState:
         # Generate and store the comprehensive report
         metadata = reporting_agent.generate_and_store_report(report_input)
 
-        print("✅ LLM-powered comprehensive report generated and stored")
-        print(f"   📄 JSON: {metadata.get('json_path', 'N/A')}")
-        print(f"   📝 Markdown: {metadata.get('markdown_path', 'N/A')}")
-        print(f"   🌐 HTML: {metadata.get('html_path', 'N/A')}")
-        print(f"   📧 Email sent: {metadata.get('email_sent', False)}")
-        print(f"   🖥️ Dashboard updated: {metadata.get('dashboard_updated', False)}")
+        print("[OK] LLM-powered comprehensive report generated and stored")
+        print(f"   [JSON] JSON: {metadata.get('json_path', 'N/A')}")
+        print(f"   [MD] Markdown: {metadata.get('markdown_path', 'N/A')}")
+        print(f"   [HTML] HTML: {metadata.get('html_path', 'N/A')}")
+        print(f"   [EMAIL] Email sent: {metadata.get('email_sent', False)}")
+        print(f"   [DASH] Dashboard updated: {metadata.get('dashboard_updated', False)}")
 
         # Store report metadata in state for downstream use
         state['report_metadata'] = metadata
@@ -53,14 +53,14 @@ def generate_report_node(state: GraphState) -> GraphState:
 
             # Log priority actions for continuous learning
             if priority_actions:
-                print("🎯 Priority Actions Identified:")
+                print("[TARGET] Priority Actions Identified:")
                 for action in priority_actions[:3]:  # Show top 3
                     print(f"   • {action.get('action', 'Unknown')} (Priority: {action.get('priority', 'Unknown')})")
 
     except Exception as e:
-        print(f"❌ Error generating LLM report: {e}")
+        print(f"[ERROR] Error generating LLM report: {e}")
         # Fallback to basic CSV report
-        print("🔄 Falling back to basic CSV report...")
+        print("[FALLBACK] Falling back to basic CSV report...")
         generate_fallback_csv_report(state)
 
     return state
@@ -219,13 +219,13 @@ def generate_fallback_csv_report(state: GraphState) -> None:
 
         report_df.to_csv(report_filename, index=False)
 
-        print(f"✅ Fallback CSV performance report saved to {report_filename}")
+        print(f"[OK] Fallback CSV performance report saved to {report_filename}")
 
         # For display, show the top 5 models by MAPE
         print("\nTop 5 Performing Models (by MAPE):")
         print(report_df.sort_values(by='mape').head(5))
     else:
-        print("⚠️ No performance data available to generate a report.")
+        print("[WARN] No performance data available to generate a report.")
 
 
 def apply_continuous_learning_feedback(priority_actions: list, state: GraphState) -> Dict[str, Any]:

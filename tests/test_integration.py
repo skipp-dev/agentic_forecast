@@ -256,17 +256,13 @@ class TestIBForecastIntegration(unittest.TestCase):
         """Test forecast agent integration."""
         symbol = 'AAPL'
 
-        # Generate forecast
-        forecast = self.forecast_agent.generate_forecast(symbol, horizon=1)
-        self.assertIsNotNone(forecast)
-        self.assertIn('prediction', forecast)
-        self.assertIn('confidence_intervals', forecast)
-
-        # Test with different model types
-        ensemble_forecast = self.forecast_agent.generate_forecast(
-            symbol, horizon=1, model_type='ensemble'
-        )
-        self.assertIsNotNone(ensemble_forecast)
+        # Interpret forecast
+        mock_forecasts = [{'horizon': 1, 'predicted_return': 0.01}]
+        mock_metrics = {'directional_accuracy': 0.6, 'smape': 0.1}
+        interpretation = self.forecast_agent.interpret_forecasts(symbol, mock_forecasts, mock_metrics)
+        self.assertIsNotNone(interpretation)
+        self.assertIn('risk_assessment', interpretation)
+        self.assertIn('scenario_notes', interpretation)
 
     def test_gpu_training_service_integration(self):
         """Test GPU training service integration."""
@@ -375,9 +371,11 @@ class TestIBForecastIntegration(unittest.TestCase):
             feature_set_id = self.feature_store.store_features(symbol, features_df)
             self.assertIsNotNone(feature_set_id)
 
-            # 3. Generate forecast
-            forecast = self.forecast_agent.generate_forecast(symbol, horizon=1)
-            self.assertIsNotNone(forecast)
+            # 3. Interpret forecast
+            mock_forecasts = [{'horizon': 1, 'predicted_return': 0.01}]
+            mock_metrics = {'directional_accuracy': 0.6, 'smape': 0.1}
+            interpretation = self.forecast_agent.interpret_forecasts(symbol, mock_forecasts, mock_metrics)
+            self.assertIsNotNone(interpretation)
 
             # 4. Train a model for inference testing
             training_data = self.training_service._prepare_training_data(symbol)

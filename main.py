@@ -40,6 +40,15 @@ def parse_args():
                        default='DAILY', help='Type of run (default: DAILY)')
     return parser.parse_args()
 
+# Parse args early to set environment variables before imports
+args = parse_args()
+
+# For BACKTEST mode, skip neuralforecast imports to avoid hangs
+if args.run_type == "BACKTEST":
+    os.environ['SKIP_NEURALFORECAST'] = 'true'
+    os.environ['RUN_TYPE'] = 'BACKTEST'
+    print("Skipping NeuralForecast imports for BACKTEST mode")
+
 def build_initial_state(symbols, config, run_type='DAILY'):
     """Build the initial GraphState with run_type"""
     return GraphState(
@@ -182,7 +191,7 @@ def setup_langsmith(config):
         os.environ['LANGCHAIN_TRACING_V2'] = 'true'
         os.environ['LANGCHAIN_API_KEY'] = api_key
         os.environ['LANGCHAIN_PROJECT'] = langsmith_config.get('project', 'agentic_forecast')
-        print("✅ LangSmith tracing enabled")
+        print("LangSmith tracing enabled")
     else:
         os.environ['LANGCHAIN_TRACING_V2'] = 'false'
         print("⚠️ LangSmith tracing disabled")
@@ -192,9 +201,6 @@ from src.graphs.state import GraphState
 
 def main():
     """Main entry point for the agentic_forecast application"""
-
-    # Parse command line arguments
-    args = parse_args()
 
     # Configure logging to reduce verbosity during evaluation
     logging.basicConfig(
@@ -228,11 +234,9 @@ def main():
     
     app = create_main_graph(config)
     
-    print(f"\nRunning the agentic workflow with run_type: {args.run_type}...")
-    
     # Load symbols from IBKR watchlist CSV
-    # For BACKTEST, limit to first 10 symbols to avoid long data loading
-    max_symbols = 10 if args.run_type == "BACKTEST" else (5 if args.run_type == "WEEKEND_HPO" else None)
+    # For BACKTEST, use config max_symbols setting
+    max_symbols = config.get('scaling', {}).get('max_symbols', None) if args.run_type == "BACKTEST" else (5 if args.run_type == "WEEKEND_HPO" else None)
     symbols = load_symbols_from_csv(max_symbols=max_symbols)
     if not symbols:
         print("Error: Could not load symbols from watchlist_ibkr.csv")

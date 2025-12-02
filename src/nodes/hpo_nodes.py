@@ -1,5 +1,5 @@
 from typing import Dict, Any
-from ..agents.hpo_agent import HPOAgent
+from ..agents.hpo_planner import HPOAgent
 from ..graphs.state import GraphState
 
 def hpo_node(state: GraphState) -> GraphState:

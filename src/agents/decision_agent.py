@@ -326,3 +326,42 @@ class DecisionAgent:
                 'reason': '; '.join(reasons),
                 'confidence': confidence
             }
+
+    def get_trading_decision(self, symbol: str, trust_score: float, forecast_confidence: str = 'low') -> Dict[str, any]:
+        """
+        Determine trading permissions and sizing based on trust score.
+        
+        Trust Score Ranges:
+        - 0.0 - 0.3: Do not auto-trade
+        - 0.3 - 0.6: Small size only
+        - 0.6 - 1.0: Normal size allowed
+        """
+        decision = {
+            'symbol': symbol,
+            'trust_score': trust_score,
+            'auto_trade_allowed': False,
+            'position_size_multiplier': 0.0,
+            'reason': ''
+        }
+        
+        if trust_score < 0.3:
+            decision['auto_trade_allowed'] = False
+            decision['position_size_multiplier'] = 0.0
+            decision['reason'] = f"Trust score too low ({trust_score:.2f} < 0.3)"
+            
+        elif trust_score < 0.6:
+            decision['auto_trade_allowed'] = True
+            decision['position_size_multiplier'] = 0.5
+            decision['reason'] = f"Moderate trust score ({trust_score:.2f}); reduced sizing"
+            
+        else:
+            decision['auto_trade_allowed'] = True
+            decision['position_size_multiplier'] = 1.0
+            decision['reason'] = f"High trust score ({trust_score:.2f}); normal sizing"
+            
+        # Additional check: if forecast confidence is explicitly 'low', cap multiplier
+        if forecast_confidence == 'low' and decision['position_size_multiplier'] > 0.5:
+            decision['position_size_multiplier'] = 0.5
+            decision['reason'] += " (Capped due to low forecast confidence)"
+            
+        return decision

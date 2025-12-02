@@ -15,7 +15,7 @@ from typing import Dict, Any, Optional
 from pathlib import Path
 
 from src.llm.llm_factory import create_llm_for_role
-from src.prompts.llm_prompts import PROMPTS, build_llm_messages
+from src.configs.llm_prompts import PROMPTS, build_llm_messages
 
 logger = logging.getLogger(__name__)
 

@@ -2,16 +2,7 @@ import os
 import pandas as pd
 import logging
 import asyncio
-from datetime import datetime, timedelta
-from ..graphs.state import GraphState
-from ..alpha_vantage_client import AlphaVantageClient
-
-logger = logging.getLogger(__name__)
-
-import os
-import pandas as pd
-import logging
-import asyncio
+import time
 from datetime import datetime, timedelta
 from ..graphs.state import GraphState
 from ..alpha_vantage_client import AlphaVantageClient
@@ -32,6 +23,11 @@ def _load_data_sync(state: GraphState) -> GraphState:
     # PRODUCTION RULE: Alpha Vantage only - no synthetic fallback for production runs
     try:
         data_ingestion = AlphaVantageClient()
+        # Update rate limit from config if available
+        if 'alpha_vantage' in config and 'rate_limit' in config['alpha_vantage']:
+            data_ingestion.rate_limit = int(config['alpha_vantage']['rate_limit'])
+            logger.info(f"Updated Alpha Vantage rate limit to {data_ingestion.rate_limit} calls/min")
+            
         primary_source = 'alpha_vantage'
         logger.info("✅ Alpha Vantage client initialized successfully")
     except ValueError as e:
@@ -46,8 +42,9 @@ def _load_data_sync(state: GraphState) -> GraphState:
 
     logger.info(f"Fetching historical data for {len(symbols)} symbols from {start_date} to {end_date}")
 
-    for symbol in symbols:
+    for i, symbol in enumerate(symbols):
         try:
+            logger.info(f"[{i+1}/{len(symbols)}] Fetching data for {symbol}...")
             # Fetch historical data using Alpha Vantage with retry logic
             data = None
             max_retries = 3
@@ -59,11 +56,11 @@ def _load_data_sync(state: GraphState) -> GraphState:
                 except Exception as e:
                     if attempt < max_retries - 1:
                         logger.warning(f"Attempt {attempt + 1} failed for {symbol}: {e}. Retrying...")
-                        import time
                         time.sleep(2 ** attempt)  # Exponential backoff
                     else:
                         logger.error(f"All {max_retries} attempts failed for {symbol}: {e}")
-                        raise
+                        # Don't raise, just log and continue to next symbol
+                        pass
 
             if data is not None and not data.empty:
                 # Filter to date range

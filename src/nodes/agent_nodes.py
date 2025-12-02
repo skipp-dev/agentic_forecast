@@ -2,12 +2,15 @@ import pandas as pd
 import logging
 
 from ..graphs.state import GraphState
-from agents.feature_agent import FeatureAgent
+from ..agents.feature_agent import FeatureAgent
 import sys
 import os
 sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..'))
 
 logger = logging.getLogger(__name__)
+
+# Skip LLM agent imports for BACKTEST mode to avoid import hangs
+_SKIP_LLM_AGENTS = os.environ.get('RUN_TYPE', '').upper() == 'BACKTEST'
 
 def feature_agent_node(state: GraphState) -> GraphState:
     """
@@ -50,7 +53,7 @@ def feature_agent_node(state: GraphState) -> GraphState:
         state['features'] = serializable_features
         return state
 
-from ..agents.analytics_agent import AnalyticsAgent
+from ..agents.analytics_explainer import AnalyticsAgent
 
 def analytics_agent_node(state: GraphState) -> GraphState:
     """
@@ -143,7 +146,10 @@ def guardrail_agent_node(state: GraphState, config: dict) -> GraphState:
     return state
 
 # from ..agents.explainability_agent import ExplainabilityAgent
-from models.model_zoo import ModelZoo
+
+# Conditional import for ModelZoo to avoid neuralforecast imports in BACKTEST mode
+if not _SKIP_LLM_AGENTS:
+    from models.model_zoo import ModelZoo
 
 # def explainability_agent_node(state: GraphState) -> GraphState:
 #     """
@@ -250,13 +256,24 @@ def graph_construction_node(state: GraphState) -> GraphState:
     logger.info("Constructed stock relationship graph.")
     return state
 
-from agents.openai_research_agent import OpenAIResearchAgent
+import os
+
+# Skip LLM agent imports for BACKTEST mode to avoid import hangs
+_SKIP_LLM_AGENTS = os.environ.get('RUN_TYPE', '').upper() == 'BACKTEST'
+
+if not _SKIP_LLM_AGENTS:
+    from ..agents.research_agent import OpenAIResearchAgent
 
 def news_data_node(state: GraphState) -> GraphState:
     """
     Runs the news data agent to gather external market intelligence.
     """
     logger.info("--- Node: News Data Agent ---")
+    
+    if _SKIP_LLM_AGENTS:
+        logger.info("Skipping news data collection for BACKTEST mode")
+        state['news_insights'] = None
+        return state
     
     try:
         agent = OpenAIResearchAgent()
@@ -280,13 +297,19 @@ def news_data_node(state: GraphState) -> GraphState:
     
     return state
 
-from agents.llm_news_agent import LLMNewsFeatureAgent, RawNewsItem, EnrichedNewsFeature
+if not _SKIP_LLM_AGENTS:
+    from ..agents.llm_news_agent import LLMNewsFeatureAgent, RawNewsItem, EnrichedNewsFeature
 
 def llm_news_enrichment_node(state: GraphState) -> GraphState:
     """
     Runs the LLM news feature enrichment agent to add structured features to news articles.
     """
     logger.info("--- Node: LLM News Enrichment Agent ---")
+
+    if _SKIP_LLM_AGENTS:
+        logger.info("Skipping LLM news enrichment for BACKTEST mode")
+        state['enriched_news'] = []
+        return state
 
     try:
         from src.llm.llm_factory import create_news_features_llm
@@ -336,7 +359,8 @@ def llm_news_enrichment_node(state: GraphState) -> GraphState:
 
     return state
 
-from agents.llm_analytics_agent import LLMAnalyticsExplainerAgent, AnalyticsInput
+if not _SKIP_LLM_AGENTS:
+    from ..agents.analytics_explainer import LLMAnalyticsExplainerAgent, AnalyticsInput
 
 def llm_analytics_node(state: GraphState) -> GraphState:
     """
@@ -344,6 +368,13 @@ def llm_analytics_node(state: GraphState) -> GraphState:
     Now uses the new orchestrator for JSON + Markdown reports with LangSmith tracing.
     """
     logger.info("--- Node: LLM Analytics Agent ---")
+
+    if _SKIP_LLM_AGENTS:
+        logger.info("Skipping LLM analytics for BACKTEST mode")
+        state['llm_analytics_summary'] = "LLM analysis skipped for backtest"
+        state['llm_actions'] = []
+        state['llm_notes'] = {}
+        return state
 
     try:
         from src.analytics.llm_analytics_orchestrator import run_llm_analytics_explainer
@@ -365,13 +396,19 @@ def llm_analytics_node(state: GraphState) -> GraphState:
 
     return state
 
-from agents.llm_hpo_planner_agent import LLMHPOPlannerAgent, HPOPlanInput, HPORun
+if not _SKIP_LLM_AGENTS:
+    from ..agents.llm_hpo_planner_agent import LLMHPOPlannerAgent, HPOPlanInput, HPORun
 
 def llm_hpo_planning_node(state: GraphState) -> GraphState:
     """
     Runs the LLM HPO planner agent to optimize hyperparameter search.
     """
     logger.info("--- Node: LLM HPO Planning Agent ---")
+    
+    if _SKIP_LLM_AGENTS:
+        logger.info("Skipping LLM HPO planning for BACKTEST mode")
+        state['llm_hpo_plan'] = None
+        return state
     
     try:
         from src.llm.llm_factory import create_hpo_planner_llm
@@ -404,7 +441,7 @@ def llm_hpo_planning_node(state: GraphState) -> GraphState:
     
     return state
 
-from agents.forecast_agent import ForecastAgent
+from ..agents.forecast_agent import ForecastAgent
 
 def forecast_agent_node(state: GraphState) -> GraphState:
     """

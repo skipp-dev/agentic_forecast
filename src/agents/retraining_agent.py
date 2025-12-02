@@ -89,7 +89,7 @@ class RetrainingAgent:
 
         history.append(history_entry)
 
-        print("✅ Retraining finished.")
+        print("[OK] Retraining finished.")
         time.sleep(1)
 
         return {

@@ -15,7 +15,7 @@ from typing import Optional, List, Dict, Union
 import time
 import requests
 
-from ..alpha_vantage_client import AlphaVantageClient
+from src.alpha_vantage_client import AlphaVantageClient
 
 logger = logging.getLogger(__name__)
 

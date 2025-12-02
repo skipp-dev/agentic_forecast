@@ -43,6 +43,6 @@ class FeatureAgent:
             df_feat.dropna(inplace=True)
             
             features[symbol] = df_feat
-            print(f"✅ Generated features for {symbol}.")
+            print(f"[OK] Generated features for {symbol}.")
             
         return features

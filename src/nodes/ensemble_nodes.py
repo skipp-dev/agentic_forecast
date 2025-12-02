@@ -1,6 +1,6 @@
 from ..graphs.state import GraphState
 from ..agents.ensemble_agent import EnsembleAgent
-from ..agents.analytics_agent import AnalyticsAgent
+from ..agents.analytics_explainer import AnalyticsAgent
 import pandas as pd
 
 def ensemble_node(state: GraphState) -> GraphState:
@@ -60,5 +60,5 @@ def ensemble_node(state: GraphState) -> GraphState:
     )
     state['performance_summary'] = performance_summary
 
-    print("✅ Created ensemble forecasts and updated performance summary.")
+    print("[OK] Created ensemble forecasts and updated performance summary.")
     return state

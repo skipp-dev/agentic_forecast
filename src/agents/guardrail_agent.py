@@ -96,12 +96,18 @@ class GuardrailAgent:
         print("Guardrail agent is running (enhanced logic)...")
 
         recommended_actions = state.get('recommended_actions', [])
-        risk_kpis = state.get('risk_kpis', pd.DataFrame())
+        risk_kpis = state.get('risk_kpis', {})
         anomalies = state.get('anomalies', {})
         raw_data = state.get('raw_data', {})
 
         high_risk_symbols = set()
-        if not risk_kpis.empty and 'risk_level' in risk_kpis.columns:
+        # Handle risk_kpis as dict instead of DataFrame
+        if isinstance(risk_kpis, dict):
+            for kpi_data in risk_kpis.values():
+                if isinstance(kpi_data, dict) and kpi_data.get('risk_level') == 'High':
+                    high_risk_symbols.add(kpi_data.get('symbol'))
+        elif hasattr(risk_kpis, 'empty') and not risk_kpis.empty and 'risk_level' in risk_kpis.columns:
+            # Fallback for DataFrame format if it exists
             high_risk_symbols = set(
                 risk_kpis.loc[risk_kpis['risk_level'] == 'High', 'symbol']
             )
@@ -165,7 +171,7 @@ class GuardrailAgent:
             )
             vetted_actions.append(placeholder)
 
-        print("✅ Guardrail agent finished with enhanced anomaly assessment.")
+        print("[OK] Guardrail agent finished with enhanced anomaly assessment.")
         return {
             "recommended_actions": vetted_actions,
             "guardrail_log": guardrail_entries,

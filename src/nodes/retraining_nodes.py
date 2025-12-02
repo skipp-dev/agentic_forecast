@@ -1,6 +1,6 @@
 from typing import Dict, Any
-from src.agents.retraining_agent import RetrainingAgent
-from src.graphs.state import GraphState
+from ..agents.retraining_agent import RetrainingAgent
+from ..graphs.state import GraphState
 
 def retraining_node(state: GraphState) -> GraphState:
     """

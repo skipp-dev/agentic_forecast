@@ -10,20 +10,20 @@ class RiskAssessmentAgent:
         """
         Assesses risk by calculating annualized volatility.
         """
-        print("🕵️‍ Running risk assessment...")
+        print("[INFO] Running risk assessment...")
         
         risk_results = []
         
         for symbol, df in data.items():
             if 'close' not in df.columns or df['close'].isnull().all():
-                print(f"⚠️ No close price data for risk assessment on {symbol}. Skipping.")
+                print(f"[WARN] No close price data for risk assessment on {symbol}. Skipping.")
                 continue
 
             # Calculate daily returns
             daily_returns = df['close'].pct_change().dropna()
 
             if len(daily_returns) < 2:
-                print(f"⚠️ Not enough data for risk assessment on {symbol}. Skipping.")
+                print(f"[WARN] Not enough data for risk assessment on {symbol}. Skipping.")
                 continue
 
             # Calculate annualized volatility

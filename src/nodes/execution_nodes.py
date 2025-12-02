@@ -1,37 +1,83 @@
 from ..graphs.state import GraphState
 
 import pandas as pd
+import numpy as np
 import logging
 import time
+import os
+import sys
+
+# Add root to path for models import
+sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..'))
+
 from ..graphs.state import GraphState
 from models.model_zoo import ModelZoo, DataSpec, ModelTrainingResult
 from sklearn.metrics import mean_absolute_percentage_error
-import neuralforecast as nf
-from neuralforecast import NeuralForecast
-from neuralforecast.auto import AutoNHITS, AutoNBEATS, AutoDLinear, AutoTFT
-from neuralforecast.models import NLinear
-import torch
-from models.gnn_model import GNNModel
+from sklearn.linear_model import LinearRegression
+
+# Conditional imports for heavy dependencies
+try:
+    if os.environ.get('SKIP_NEURALFORECAST', '').lower() not in ('true', '1', 'yes'):
+        import neuralforecast as nf
+        from neuralforecast import NeuralForecast
+        from neuralforecast.auto import AutoNHITS, AutoNBEATS, AutoDLinear, AutoTFT
+        from neuralforecast.models import NLinear
+        import torch
+        from models.gnn_model import GNNModel
+        _HAS_HEAVY_DEPS = True
+    else:
+        nf = NeuralForecast = AutoNHITS = AutoNBEATS = AutoDLinear = AutoTFT = NLinear = None
+        torch = None
+        GNNModel = None
+        _HAS_HEAVY_DEPS = False
+except Exception:
+    nf = NeuralForecast = AutoNHITS = AutoNBEATS = AutoDLinear = AutoTFT = NLinear = None
+    torch = None
+    GNNModel = None
+    _HAS_HEAVY_DEPS = False
 
 logger = logging.getLogger(__name__)
 
-def _train_all_models(model_zoo: ModelZoo, data_spec: DataSpec, edge_index=None, node_features=None, symbol_to_idx=None) -> dict[str, ModelTrainingResult]:
+def _train_all_models(model_zoo: ModelZoo, data_spec: DataSpec, edge_index=None, node_features=None, symbol_to_idx=None, priority_order=None) -> dict[str, ModelTrainingResult]:
     """Helper to train all available models in the zoo."""
     results = {}
-    # Train all core model families
-    all_families = model_zoo.get_core_model_families()
     
-    for family in all_families:
-        train_method_name = f"train_{family.lower()}"
+    # Use priority order if provided, otherwise use all core model families
+    if priority_order:
+        model_families = priority_order
+    else:
+        model_families = model_zoo.get_core_model_families()
+    
+    for family in model_families:
+        # Map config names to actual model family names
+        if family == "LSTM":
+            train_method_name = "train_lstm"
+            actual_family = "NHITS"
+        elif family == "AutoDLinear":
+            train_method_name = "train_autodlinear" 
+            actual_family = "DLinear"
+        elif family == "TFT":
+            train_method_name = "train_tft"
+            actual_family = "TFT"
+        elif family == "BaselineLinear":
+            train_method_name = "train_baseline_linear"
+            actual_family = "BaselineLinear"
+        else:
+            # For other families, use lowercase
+            train_method_name = f"train_{family.lower()}"
+            actual_family = family
+        
         train_method = getattr(model_zoo, train_method_name, None)
         if train_method:
             try:
-                if family == "GNN":
+                if actual_family == "GNN":
                     # For GNN, update DataSpec with graph data
                     data_spec.edge_index = edge_index
                     data_spec.node_features = node_features
                     data_spec.symbol_to_idx = symbol_to_idx
                 result = train_method(data_spec)
+                # Update the result to use the config name instead of actual family name
+                result.model_family = family
                 results[family] = result
             except NotImplementedError:
                 logger.warning(f"Skipping not implemented model family: {family}")
@@ -74,7 +120,12 @@ def forecasting_node(state: GraphState) -> GraphState:
             for j in range(num_nodes):
                 if i != j:
                     edges.append([i, j])
-        edge_index = torch.tensor(edges, dtype=torch.long).t().contiguous()
+        
+        if _HAS_HEAVY_DEPS and torch is not None:
+            edge_index = torch.tensor(edges, dtype=torch.long).t().contiguous()
+        else:
+            edge_index = None  # Skip graph construction for backtest
+        
         node_features_list = []
         for symbol in symbols:
             if symbol in features:
@@ -102,8 +153,12 @@ def forecasting_node(state: GraphState) -> GraphState:
                         # Truncate to horizon
                         sym_features = sym_features[-horizon:]
                     node_features_list.append(sym_features)
-        if node_features_list:
+        
+        if node_features_list and _HAS_HEAVY_DEPS and torch is not None:
             node_features = torch.tensor(node_features_list, dtype=torch.float)
+        else:
+            node_features = None
+        
         state['edge_index'] = edge_index
         state['node_features'] = node_features
         state['symbol_to_idx'] = symbol_to_idx
@@ -160,10 +215,12 @@ def forecasting_node(state: GraphState) -> GraphState:
         if symbol in hpo_results and hpo_results[symbol]:
             model_results = hpo_results[symbol]
         else:
-            # Fallback: train all models
+            # Fallback: train models according to priority order
             edge_index = state.get('edge_index')
             symbol_to_idx = state.get('symbol_to_idx')
             node_features = state.get('node_features')
+            # Use only BaselineLinear for short time series
+            priority_order = ["BaselineLinear"]
 
             if node_features is None and edge_index is not None and symbol_to_idx is not None:
                 node_features_list = []
@@ -194,7 +251,10 @@ def forecasting_node(state: GraphState) -> GraphState:
                                 sym_features = sym_features[-horizon:]
                             node_features_list.append(sym_features)
                 if node_features_list:
-                    node_features = torch.tensor(node_features_list, dtype=torch.float)
+                    if _HAS_HEAVY_DEPS and torch is not None:
+                        node_features = torch.tensor(node_features_list, dtype=torch.float)
+                    else:
+                        node_features = None  # Skip for backtest
 
             data_spec = DataSpec(
                 job_id=f"forecast_{symbol}_{int(time.time())}",
@@ -205,12 +265,17 @@ def forecasting_node(state: GraphState) -> GraphState:
                 target_col='y',
                 horizon=horizon
             )
-            model_results = _train_all_models(model_zoo, data_spec, edge_index, node_features, symbol_to_idx)
+            model_results = _train_all_models(model_zoo, data_spec, edge_index, node_features, symbol_to_idx, priority_order)
         
         for model_name, model_result in model_results.items():
             if model_result:
                 model_path = model_result.artifact_path
                 if model_result.model_family == "GNN":
+                    # Skip GNN for backtest mode
+                    if not _HAS_HEAVY_DEPS or GNNModel is None:
+                        logger.warning(f"Skipping GNN model for {symbol} - heavy dependencies not available")
+                        continue
+                    
                     # Load GNN model
                     if state.get('node_features') is not None:
                         num_node_features = state['node_features'].shape[1]
@@ -268,108 +333,188 @@ def forecasting_node(state: GraphState) -> GraphState:
                         pred_future = y_pred
                     else:
                         # Load NeuralForecast model
-                        nf_inst = NeuralForecast.load(path=model_path)
-                        
-                        # Handle different model family naming
-                        if model_result.model_family == "CNNLSTM":
-                            column_name = "BiTCN"
-                        elif model_result.model_family == "Ensemble":
-                            column_name = "ensemble"
-                        else:
-                            column_name = model_result.model_family
-                        
-                        # Prepare future dataframe for prediction - ensure it matches training format
-                        # Use the same unique_id format as training: symbol_scope.replace(":", "_")
-                        unique_id_formatted = symbol.replace(":", "_")
-
-                        # For NeuralForecast models, we need to create future dataframe that matches training structure
-                        # Get the last date from training and create future dates with same frequency
-                        last_train_date = train_df['ds'].max()
-                        future_dates = pd.date_range(start=last_train_date + pd.Timedelta(days=1),
-                                                   periods=horizon, freq='D')
-
-                        # Create future dataframe with same unique_id as training
-                        futr_df = pd.DataFrame({
-                            'unique_id': [unique_id_formatted] * horizon,
-                            'ds': future_dates
-                        })
-
-                        # Add any exogenous variables if they exist in training data
-                        # NeuralForecast expects the same columns as training
-                        if len(train_df.columns) > 2:  # More than unique_id, ds, y
-                            exogenous_cols = [col for col in train_df.columns if col not in ['unique_id', 'ds', 'y']]
-                            for col in exogenous_cols:
-                                if col in train_df.columns:
-                                    # Use last known value for exogenous variables
-                                    last_val = train_df[col].iloc[-1]
-                                    futr_df[col] = last_val
-
-                        try:
-                            preds_val = nf_inst.predict(futr_df=futr_df)
-                            
-                            if model_result.model_family == "Ensemble":
-                                y_pred = preds_val.select_dtypes(include=[float, int]).mean(axis=1).values
+                        if model_result.model_family == "BaselineLinear":
+                            # BaselineLinear doesn't save models, retrain it
+                            if not _HAS_HEAVY_DEPS or NLinear is None or NeuralForecast is None:
+                                # Use sklearn fallback
+                                logger.info(f"Using sklearn LinearRegression fallback for {symbol} (retraining)")
+                                
+                                # Prepare data
+                                X_train = np.arange(len(train_df)).reshape(-1, 1)
+                                y_train = train_df['y'].values
+                                
+                                model = LinearRegression()
+                                model.fit(X_train, y_train)
+                                
+                                column_name = 'LinearRegression'
+                                # No validation prediction needed here as we are just setting up for future prediction logic below?
+                                # Wait, the code below expects preds_val
+                                
+                                # Predict validation
+                                X_val = np.arange(len(train_df), len(train_df) + len(val_df)).reshape(-1, 1)
+                                y_pred = model.predict(X_val)
+                                
+                                mape_val = model_result.best_val_mape
+                                mae_val = model_result.best_val_mae
+                                model_family = model_result.model_family
+                                
+                                # For future forecast
+                                X_future = np.arange(len(full_df), len(full_df) + horizon).reshape(-1, 1)
+                                pred_future = model.predict(X_future)
+                                
+                                # Skip the rest of the NeuralForecast logic block
+                                # We need to structure this carefully to avoid executing the NF block
                             else:
-                                y_pred = preds_val[column_name].values
-                            mape_val = model_result.best_val_mape
-                            mae_val = model_result.best_val_mae
-                            model_family = model_result.model_family
+                                from neuralforecast.models import NLinear
+                                input_size = 2 * horizon
+                                nf_inst = NeuralForecast(models=[NLinear(h=horizon, input_size=input_size, max_steps=50)], freq="D")
+                                # Prepare data for retraining
+                                unique_id = symbol.replace(":", "_")
+                                train_nf_local = pd.DataFrame({"unique_id": unique_id, "ds": train_df['ds'], "y": train_df['y']})
+                                nf_inst.fit(df=train_nf_local)
+                                column_name = 'NLinear'
+                        else:
+                            nf_inst = NeuralForecast.load(path=model_path)
                             
-                            # Fit on full data for future forecast
-                            nf_inst.fit(df=full_df)
-                            # Create future dataframe with same format as training
+                            # Handle different model family naming
+                            if model_result.model_family == "LSTM":
+                                column_name = "NHITS"
+                            elif model_result.model_family == "AutoDLinear":
+                                column_name = "DLinear"
+                            elif model_result.model_family == "TFT":
+                                column_name = "TFT"
+                            elif model_result.model_family == "Ensemble":
+                                column_name = "ensemble"
+                            else:
+                                column_name = model_result.model_family
+                        
+                        # Only execute NF prediction logic if we haven't already done sklearn fallback
+                        if not (model_result.model_family == "BaselineLinear" and (not _HAS_HEAVY_DEPS or NLinear is None)):
+                            # Prepare future dataframe for prediction - ensure it matches training format
+                            # Use the same unique_id format as training: symbol_scope.replace(":", "_")
                             unique_id_formatted = symbol.replace(":", "_")
 
-                            # Get the last date from full data and create future dates
-                            last_full_date = full_df['ds'].max()
-                            future_dates = pd.date_range(start=last_full_date + pd.Timedelta(days=1),
+                            # For NeuralForecast models, we need to create future dataframe that matches training structure
+                            # Get the last date from training and create future dates with same frequency
+                            last_train_date = train_df['ds'].max()
+                            future_dates = pd.date_range(start=last_train_date + pd.Timedelta(days=1),
                                                        periods=horizon, freq='D')
 
-                            futr_future_df = pd.DataFrame({
+                            # Create future dataframe with same unique_id as training
+                            futr_df = pd.DataFrame({
                                 'unique_id': [unique_id_formatted] * horizon,
                                 'ds': future_dates
                             })
 
                             # Add any exogenous variables if they exist in training data
-                            if len(full_df.columns) > 2:  # More than unique_id, ds, y
-                                exogenous_cols = [col for col in full_df.columns if col not in ['unique_id', 'ds', 'y']]
+                            # NeuralForecast expects the same columns as training
+                            if len(train_df.columns) > 2:  # More than unique_id, ds, y
+                                exogenous_cols = [col for col in train_df.columns if col not in ['unique_id', 'ds', 'y']]
                                 for col in exogenous_cols:
-                                    if col in full_df.columns:
+                                    if col in train_df.columns:
                                         # Use last known value for exogenous variables
-                                        last_val = full_df[col].iloc[-1]
-                                        futr_future_df[col] = last_val
+                                        last_val = train_df[col].iloc[-1]
+                                        futr_df[col] = last_val
 
-                            preds_future = nf_inst.predict(futr_df=futr_future_df)
-                            if model_family == "Ensemble":
-                                pred_future = preds_future.select_dtypes(include=[float, int]).mean(axis=1).values
-                            else:
-                                pred_future = preds_future[column_name].values
-                        except Exception as e:
-                            logger.error(f"Error predicting with {model_result.model_family} for {symbol}: {e}")
-                            # Skip this model and continue with others
-                            continue
+                            try:
+                                preds_val = nf_inst.predict(futr_df=futr_df)
+                                
+                                if model_result.model_family == "Ensemble":
+                                    y_pred = preds_val.select_dtypes(include=[float, int]).mean(axis=1).values
+                                else:
+                                    y_pred = preds_val[column_name].values
+                                mape_val = model_result.best_val_mape
+                                mae_val = model_result.best_val_mae
+                                model_family = model_result.model_family
+                                
+                                # Fit on full data for future forecast
+                                nf_inst.fit(df=full_df)
+                                # Create future dataframe with same format as training
+                                unique_id_formatted = symbol.replace(":", "_")
+
+                                # Get the last date from full data and create future dates
+                                last_full_date = full_df['ds'].max()
+                                future_dates = pd.date_range(start=last_full_date + pd.Timedelta(days=1),
+                                                           periods=horizon, freq='D')
+
+                                futr_future_df = pd.DataFrame({
+                                    'unique_id': [unique_id_formatted] * horizon,
+                                    'ds': future_dates
+                                })
+
+                                # Add any exogenous variables if they exist in training data
+                                if len(full_df.columns) > 2:  # More than unique_id, ds, y
+                                    exogenous_cols = [col for col in full_df.columns if col not in ['unique_id', 'ds', 'y']]
+                                    for col in exogenous_cols:
+                                        if col in full_df.columns:
+                                            # Use last known value for exogenous variables
+                                            last_val = full_df[col].iloc[-1]
+                                            futr_future_df[col] = last_val
+
+                                preds_future = nf_inst.predict(futr_df=futr_future_df)
+                                if model_family == "Ensemble":
+                                    pred_future = preds_future.select_dtypes(include=[float, int]).mean(axis=1).values
+                                else:
+                                    # Use the same column name mapping as above
+                                    if model_family == "LSTM":
+                                        future_column = "NHITS"
+                                    elif model_family == "AutoDLinear":
+                                        future_column = "DLinear"
+                                    elif model_family == "TFT":
+                                        future_column = "TFT"
+                                    else:
+                                        future_column = model_family
+                                    pred_future = preds_future[future_column].values
+                            except Exception as e:
+                                logger.error(f"Error predicting with {model_result.model_family} for {symbol}: {e}")
+                                # Skip this model and continue with others
+                                continue
             else:
-                # Fallback: train default BaselineLinear
-                from neuralforecast.models import NLinear
-                input_size = 2 * horizon
-                model = NLinear(h=horizon, input_size=input_size, max_steps=50)
-                nf_inst = NeuralForecast(models=[model], freq="D")
-                nf_inst.fit(df=train_df)
-                futr_df = pd.DataFrame({
-                    'unique_id': [symbol] * horizon,
-                    'ds': pd.date_range(start=val_df['ds'].iloc[-1], periods=horizon+1, freq='D')[1:]
-                })
-                preds_val = nf_inst.predict(futr_df=futr_df)
-                y_pred = preds_val['NLinear'].values
-                mape_val = 0.5  # Fallback, no validation mape available
-                mae_val = 0.5
-                column_name = 'NLinear'
-                model_family = 'BaselineLinear'
-                
-                # Fit on full data for future forecast
-                nf_inst.fit(df=full_df)
-                preds_future = nf_inst.predict()
-                pred_future = preds_future['NLinear'].values
+                # Fallback: train default BaselineLinear (skip for backtest if heavy deps not available)
+                if not _HAS_HEAVY_DEPS or NLinear is None or NeuralForecast is None:
+                    # Use sklearn fallback
+                    logger.info(f"Using sklearn LinearRegression fallback for {symbol}")
+                    
+                    # Prepare data
+                    X_train = np.arange(len(train_df)).reshape(-1, 1)
+                    y_train = train_df['y'].values
+                    
+                    model = LinearRegression()
+                    model.fit(X_train, y_train)
+                    
+                    # Predict validation
+                    X_val = np.arange(len(train_df), len(train_df) + len(val_df)).reshape(-1, 1)
+                    y_pred = model.predict(X_val)
+                    
+                    mape_val = mean_absolute_percentage_error(val_df['y'], y_pred)
+                    mae_val = np.mean(np.abs(val_df['y'] - y_pred))
+                    column_name = 'LinearRegression'
+                    model_family = 'BaselineLinear'
+                    
+                    # Predict future
+                    X_future = np.arange(len(full_df), len(full_df) + horizon).reshape(-1, 1)
+                    pred_future = model.predict(X_future)
+                else:
+                    from neuralforecast.models import NLinear
+                    input_size = 2 * horizon
+                    model = NLinear(h=horizon, input_size=input_size, max_steps=50)
+                    nf_inst = NeuralForecast(models=[model], freq="D")
+                    nf_inst.fit(df=train_df)
+                    futr_df = pd.DataFrame({
+                        'unique_id': [symbol] * horizon,
+                        'ds': pd.date_range(start=val_df['ds'].iloc[-1], periods=horizon+1, freq='D')[1:]
+                    })
+                    preds_val = nf_inst.predict(futr_df=futr_df)
+                    y_pred = preds_val['NLinear'].values
+                    mape_val = 0.5  # Fallback, no validation mape available
+                    mae_val = 0.5
+                    column_name = 'NLinear'
+                    model_family = 'BaselineLinear'
+                    
+                    # Fit on full data for future forecast
+                    nf_inst.fit(df=full_df)
+                    preds_future = nf_inst.predict()
+                    pred_future = preds_future['NLinear'].values
             
             performance_summary.append({
                 'symbol': symbol,

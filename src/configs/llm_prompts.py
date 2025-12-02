@@ -3,11 +3,6 @@ LLM Prompt Library for Agentic Forecasting.
 Contains templates for various agent tasks.
 """
 
-"""
-LLM Prompt Library for Agentic Forecasting.
-Contains templates for various agent tasks.
-"""
-
 PROMPTS = {
     "analytics_explainer": """
 You are an expert time-series and forecasting analyst embedded in an automated agentic system.
@@ -85,29 +80,8 @@ You will receive a structured metrics payload from an automated forecasting syst
 
 Here is the payload as JSON:
 
-Run metadata:
-{{run_metadata_json}}
-
-Global metrics:
-{{metrics_global_json}}
-
-Per-symbol / per-horizon metrics:
-{{per_symbol_metrics_json}}
-
-Per-model-family metrics:
-{{per_family_metrics_json}}
-
-Regime metrics (if available):
-{{regime_metrics_json}}
-
-Feature importance (if available):
-{{feature_importance_json}}
-
-Guardrail summary:
-{{guardrail_summary_json}}
-
-Sanity / quality checks (metric_sanity, metric_quality, issues):
-{{sanity_and_quality_json}}
+Metrics Payload:
+{metrics_json}
 
 Please:
 - Fill the JSON schema described in the system prompt.
@@ -179,20 +153,18 @@ We are planning the next hyperparameter optimization session.
 
 Here is the latest performance data:
 
-Per-symbol / per-horizon metrics (including MAE, MAPE, SMAPE, SWASE, directional_accuracy):
-{{per_symbol_metrics_json}}
+Past HPO Runs:
+{past_hpo_runs_json}
 
 Model family performance summary:
-{{family_performance_json}}
-
-Business priorities (symbols, buckets, sectors that matter most):
-{{business_priorities_json}}
+{family_performance_json}
 
 Total HPO budget (max number of trials across all models combined):
-{{hpo_budget_trials}}
+{total_trials}
 
-Available model families and their current configs:
-{{available_model_families_json}}
+Constraints:
+Min trials per family: {min_trials}
+Max trials per family: {max_trials}
 
 Please:
 - Select symbols and horizons that should receive HPO budget.
@@ -261,7 +233,7 @@ You MUST return valid JSON with this structure:
 We want to convert these raw news items into structured features for our forecasting models.
 
 Here is a JSON list of raw news items:
-{{raw_news_items_json}}
+{raw_news_items_json}
 
 Each item has:
 - "symbol": ticker string,
@@ -334,10 +306,10 @@ We want a high-level research view to guide future improvements.
 
 Here are:
 - Selected metrics and regime summaries from the latest runs:
-{{selected_metrics_and_regimes_json}}
+{selected_metrics_and_regimes_json}
 
 - Optional external context (macro, sector, recent events):
-{{external_context_notes}}
+{external_context_notes}
 
 Please:
 - Fill the JSON structure described in the system prompt.
@@ -369,6 +341,25 @@ Output format:
 - Structured JSON with confidence levels and explanations
 - Clear separation of facts from interpretations
 - Actionable recommendations for position sizing
+""",
+
+    "forecast_agent_user_template": """
+We need a risk-aware interpretation of the latest forecasts.
+
+Forecast Data:
+{forecast_data_json}
+
+Performance Metrics:
+{performance_metrics_json}
+
+Guardrail Status:
+{guardrail_status_json}
+
+Please:
+- Analyze the forecast confidence based on the provided metrics.
+- Check for any guardrail violations that should lower confidence.
+- Provide a clear recommendation (HIGH/MEDIUM/LOW confidence).
+- Explain the reasoning.
 """,
 
     "reporting_agent": """
@@ -419,22 +410,22 @@ We want a human-readable report for the latest run of the forecasting platform.
 Here are the structured inputs:
 
 Analytics explainer output:
-{{analytics_explainer_json}}
+{analytics_summary}
 
 HPO planner output:
-{{hpo_planner_json}}
+{hpo_plan}
 
 Research agent output:
-{{research_agent_json}}
+{research_insights}
 
 Key guardrail and health summary:
-{{guardrail_and_health_json}}
+{guardrail_status}
 
 Run metadata and timestamps:
-{{run_metadata_json}}
+{run_metadata}
 
 Intended audience mix (e.g. "quants, ops, management"):
-{{audience_description}}
+{audience_description}
 
 Please:
 - Produce a JSON report according to the schema in the system prompt.
@@ -486,14 +477,20 @@ We want a local explanation for one symbol and horizon.
 
 Here is the input bundle:
 
-Forecast slice for this symbol:
-{{forecast_slice_json}}
+Symbol: {symbol}
+Horizon: {horizon}
+Forecast Return: {forecast_return}
+Actual Return: {actual_return}
+Model Family: {model_family}
 
 Feature importance / SHAP information:
-{{feature_importance_json}}
+{feature_importance}
 
 Regime and guardrail info for this symbol:
-{{regime_and_guardrail_info_json}}
+{regime_context}
+
+Active Guardrails:
+{guardrails_active}
 
 Please:
 - Fill the JSON structure described in the system prompt.
@@ -544,13 +541,16 @@ You MUST return valid JSON with this structure:
 We need human-readable alert messages for this triggered event.
 
 Alert payload (from Alertmanager / internal alert bus):
-{{alert_payload_json}}
+{alerts_data}
 
 Current forecast and risk snapshot for this symbol/horizon:
-{{forecast_and_risk_snapshot_json}}
+{guardrail_context}
 
-Requested channels (e.g. ["slack", "whatsapp", "email"]):
-{{requested_channels_json}}
+Recipient Context:
+{recipient_context}
+
+Requested Channel:
+{channel}
 
 Please:
 - Fill the JSON structure from the system prompt.
@@ -839,54 +839,46 @@ def build_hpo_planner_user_prompt(past_hpo_runs: list, family_performance: dict,
     )
 
 
-def build_news_enrichment_user_prompt(symbol: str, timestamp: str, headline: str, body: str) -> str:
+def build_news_enrichment_user_prompt(raw_news_items: list) -> str:
     """
     Build the user prompt for News Enrichment.
     
     Args:
-        symbol: Stock symbol
-        timestamp: News timestamp
-        headline: News headline
-        body: News body content
-        
-    Returns:
-        Formatted user prompt string
-    """
-    return PROMPTS["news_enrichment_user_template"].format(
-        symbol=symbol,
-        timestamp=timestamp,
-        headline=headline,
-        body=body
-    )
-
-
-def build_research_agent_user_prompt(research_question: str, historical_data: dict, model_performance: dict) -> str:
-    """
-    Build the user prompt for the Research Agent.
-    
-    Args:
-        research_question: The research question to investigate
-        historical_data: Summary of available historical data
-        model_performance: Current model performance state
+        raw_news_items: List of news item dictionaries
         
     Returns:
         Formatted user prompt string
     """
     import json
+    items_json = json.dumps(raw_news_items, indent=2)
+    return PROMPTS["news_enrichment_user_template"].format(
+        raw_news_items_json=items_json
+    )
+
+
+def build_research_agent_user_prompt(metrics_and_regimes: dict, external_context: str = "") -> str:
+    """
+    Build the user prompt for the Research Agent.
     
-    data_json = json.dumps(historical_data, indent=2)
-    perf_json = json.dumps(model_performance, indent=2)
+    Args:
+        metrics_and_regimes: Dictionary of metrics and regime info
+        external_context: Optional string with external context notes
+        
+    Returns:
+        Formatted user prompt string
+    """
+    import json
+    metrics_json = json.dumps(metrics_and_regimes, indent=2)
     
     return PROMPTS["research_agent_user_template"].format(
-        research_question=research_question,
-        historical_data_summary=data_json,
-        model_performance_summary=perf_json
+        selected_metrics_and_regimes_json=metrics_json,
+        external_context_notes=external_context
     )
 
 
 def build_reporting_agent_user_prompt(analytics_summary: dict, hpo_plan: dict, 
                                      research_insights: dict, guardrail_status: dict,
-                                     run_metadata: dict) -> str:
+                                     run_metadata: dict, audience: str = "quants, ops, management") -> str:
     """
     Build the user prompt for the Reporting Agent.
     
@@ -896,6 +888,7 @@ def build_reporting_agent_user_prompt(analytics_summary: dict, hpo_plan: dict,
         research_insights: Output from research agent
         guardrail_status: Current guardrail status
         run_metadata: Run metadata (timestamps, etc.)
+        audience: Description of the intended audience
         
     Returns:
         Formatted user prompt string
@@ -913,7 +906,8 @@ def build_reporting_agent_user_prompt(analytics_summary: dict, hpo_plan: dict,
         hpo_plan=hpo_json,
         research_insights=research_json,
         guardrail_status=guardrail_json,
-        run_metadata=metadata_json
+        run_metadata=metadata_json,
+        audience_description=audience
     )
 
 

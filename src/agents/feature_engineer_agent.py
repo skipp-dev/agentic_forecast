@@ -20,7 +20,7 @@ import talib
 sys.path.append(os.path.dirname(__file__))
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 
-from agents.feature_agent import FeatureAgent
+from src.agents.feature_agent import FeatureAgent
 from src.gpu_services import get_gpu_services
 from src.data_pipeline import DataPipeline
 

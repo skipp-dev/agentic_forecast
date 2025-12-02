@@ -9,6 +9,12 @@ import logging
 from typing import Dict, Any, Optional, List
 from pathlib import Path
 import yaml
+import sys
+import os
+
+# Add project root to path
+project_root = Path(__file__).parent.parent.parent
+sys.path.insert(0, str(project_root))
 
 from src.config.config_loader import get_strategy_playbook
 

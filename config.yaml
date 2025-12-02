@@ -33,7 +33,7 @@ ibkr:
 # --- Scaling Configuration ---
 scaling:
   # Maximum number of symbols to process in a single run
-  max_symbols: 2  # Limited for testing
+  max_symbols: 500  # Run for all symbols in watchlist
 
   # Batch processing settings - Maximum throughput
   batch_size: 100  # Maximum symbols per batch
@@ -148,7 +148,7 @@ llm:
 
 # --- Model Preferences ---
 models:
-  primary: ["LSTM", "TFT", "AutoDLinear"]
+  primary: ["BaselineLinear"]
   fallback: ["BaselineLinear"]
-  priority_order: ["LSTM", "TFT", "AutoDLinear", "BaselineLinear"]
+  priority_order: ["BaselineLinear"]
 

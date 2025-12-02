@@ -73,7 +73,7 @@ class HPOAgent:
                 self.results[symbol]['AutoTFT'] = self.model_zoo.train_autotft(data_spec, hpo_config_large)
 
             except Exception as e:
-                print(f"❌ Error processing symbol {symbol}: {e}")
+                print(f"[ERROR] Error processing symbol {symbol}: {e}")
 
         self.print_summary()
 
