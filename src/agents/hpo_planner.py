@@ -69,6 +69,10 @@ class HPOAgent:
         Runs the HPO session for all symbols and model families.
         """
         logger.info("--- Starting HPO Session ---")
+        
+        # Determine run type
+        run_type = os.environ.get('RUN_TYPE', 'DAILY')
+        logger.info(f"HPO Run Type: {run_type}")
 
         for symbol in self.symbols:
             logger.info(f"--- Processing Symbol: {symbol} ---")
@@ -97,18 +101,40 @@ class HPOAgent:
                 self.results[symbol] = {}
 
                 # Define HPO configs
-                # Default to realistic values if not in config
                 hpo_settings = self.config.get('hpo', {})
                 
+                # Select settings based on run_type
+                if run_type == 'WEEKEND_HPO':
+                    run_settings = hpo_settings.get('weekend_hpo', {})
+                    if not run_settings:
+                        logger.warning("WEEKEND_HPO settings not found in config, falling back to defaults.")
+                else:
+                    run_settings = hpo_settings.get('daily', {})
+                    if not run_settings:
+                        logger.warning("DAILY settings not found in config, falling back to defaults.")
+
+                # Get early stopping patience
+                early_stopping_patience = hpo_settings.get('early_stopping_patience', 3)
+
                 # Small config (for lighter models)
-                small_trials = hpo_settings.get('small_trials', 10)
-                small_epochs = hpo_settings.get('small_epochs', 10)
-                hpo_config_small = HPOConfig(max_trials=small_trials, max_epochs=small_epochs)
+                small_settings = run_settings.get('small_models', {})
+                small_trials = small_settings.get('trials', 10)
+                small_epochs = small_settings.get('max_epochs', 10)
+                hpo_config_small = HPOConfig(
+                    max_trials=small_trials, 
+                    max_epochs=small_epochs,
+                    early_stopping_patience=early_stopping_patience
+                )
 
                 # Large config (for heavier models)
-                large_trials = hpo_settings.get('large_trials', 20)
-                large_epochs = hpo_settings.get('large_epochs', 20)
-                hpo_config_large = HPOConfig(max_trials=large_trials, max_epochs=large_epochs)
+                large_settings = run_settings.get('large_models', {})
+                large_trials = large_settings.get('trials', 20)
+                large_epochs = large_settings.get('max_epochs', 20)
+                hpo_config_large = HPOConfig(
+                    max_trials=large_trials, 
+                    max_epochs=large_epochs,
+                    early_stopping_patience=early_stopping_patience
+                )
 
                 # Train models
                 logger.info(f"Training BaselineLinear for {symbol}...")

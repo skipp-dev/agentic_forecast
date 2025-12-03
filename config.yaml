@@ -93,10 +93,24 @@ hpo:
   trigger_mape_threshold: 0.1
   
   # HPO Search Space Settings
-  small_trials: 10  # For lighter models (DLinear, NHITS)
-  small_epochs: 10
-  large_trials: 20  # For heavier models (TFT)
-  large_epochs: 20
+  daily:
+    small_models:
+      trials: 10
+      max_epochs: 10
+    large_models:
+      trials: 20
+      max_epochs: 20
+  
+  weekend_hpo:
+    small_models:
+      trials: 30
+      max_epochs: 20
+    large_models:
+      trials: 50
+      max_epochs: 40
+      
+  # Early stopping patience (epochs)
+  early_stopping_patience: 3
 
 # --- Anomaly Detection Configuration ---
 anomaly_detection:
