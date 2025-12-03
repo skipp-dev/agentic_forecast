@@ -33,7 +33,8 @@ ibkr:
 # --- Scaling Configuration ---
 scaling:
   # Maximum number of symbols to process in a single run
-  max_symbols: 3  # Run for all symbols in watchlist
+  # max_symbols: 3  # Run for all symbols in watchlist
+  max_symbols: null # Run for all symbols in watchlist
 
   # Batch processing settings - Maximum throughput
   batch_size: 100  # Maximum symbols per batch
@@ -90,6 +91,12 @@ hpo:
   # MAPE threshold to trigger a new HPO run. 
   # If any symbol's best model performs worse than this, HPO will be triggered.
   trigger_mape_threshold: 0.1
+  
+  # HPO Search Space Settings
+  small_trials: 10  # For lighter models (DLinear, NHITS)
+  small_epochs: 10
+  large_trials: 20  # For heavier models (TFT)
+  large_epochs: 20
 
 # --- Anomaly Detection Configuration ---
 anomaly_detection:

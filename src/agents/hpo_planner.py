@@ -15,7 +15,7 @@ class HPOAgent:
     """
     Hyperparameter Optimization Agent to orchestrate model training and tuning.
     """
-    def __init__(self, symbols: List[str], data_store: Dict[str, pd.DataFrame] = None, data_path: str = 'data/reference'):
+    def __init__(self, symbols: List[str], data_store: Dict[str, pd.DataFrame] = None, data_path: str = 'data/reference', config: Dict = None):
         """
         Initializes the HPOAgent.
 
@@ -23,10 +23,12 @@ class HPOAgent:
             symbols (List[str]): A list of stock symbols to process.
             data_store (Dict[str, pd.DataFrame]): Dictionary containing data for each symbol.
             data_path (str): The path to the reference data (fallback).
+            config (Dict): Configuration dictionary.
         """
         self.symbols = symbols
         self.data_store = data_store
         self.data_path = data_path
+        self.config = config or {}
         self.model_zoo = ModelZoo()
         self.results: Dict[str, Dict[str, ModelTrainingResult]] = {}
         self.model_registry = ModelRegistry()
@@ -95,20 +97,30 @@ class HPOAgent:
                 self.results[symbol] = {}
 
                 # Define HPO configs
-                hpo_config_small = HPOConfig(max_trials=1, max_epochs=2)
-                hpo_config_large = HPOConfig(max_trials=1, max_epochs=3)
+                # Default to realistic values if not in config
+                hpo_settings = self.config.get('hpo', {})
+                
+                # Small config (for lighter models)
+                small_trials = hpo_settings.get('small_trials', 10)
+                small_epochs = hpo_settings.get('small_epochs', 10)
+                hpo_config_small = HPOConfig(max_trials=small_trials, max_epochs=small_epochs)
+
+                # Large config (for heavier models)
+                large_trials = hpo_settings.get('large_trials', 20)
+                large_epochs = hpo_settings.get('large_epochs', 20)
+                hpo_config_large = HPOConfig(max_trials=large_trials, max_epochs=large_epochs)
 
                 # Train models
                 logger.info(f"Training BaselineLinear for {symbol}...")
                 self.results[symbol]['BaselineLinear'] = self.model_zoo.train_baseline_linear(data_spec)
 
-                logger.info(f"Training AutoDLinear for {symbol}...")
+                logger.info(f"Training AutoDLinear for {symbol} (trials={small_trials}, epochs={small_epochs})...")
                 self.results[symbol]['AutoDLinear'] = self.model_zoo.train_autodlinear(data_spec, hpo_config_small)
 
-                logger.info(f"Training AutoNHITS for {symbol}...")
+                logger.info(f"Training AutoNHITS for {symbol} (trials={small_trials}, epochs={small_epochs})...")
                 self.results[symbol]['AutoNHITS'] = self.model_zoo.train_autonhits(data_spec, hpo_config_small)
 
-                logger.info(f"Training AutoTFT for {symbol}...")
+                logger.info(f"Training AutoTFT for {symbol} (trials={large_trials}, epochs={large_epochs})...")
                 self.results[symbol]['AutoTFT'] = self.model_zoo.train_autotft(data_spec, hpo_config_large)
 
             except Exception as e:
