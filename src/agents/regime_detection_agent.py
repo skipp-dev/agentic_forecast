@@ -129,7 +129,7 @@ class RegimeDetectionAgent:
 
         # Select numeric columns for clustering
         numeric_cols = macro_features.select_dtypes(include=[np.number]).columns
-        cluster_data = macro_features[numeric_cols].fillna(method='ffill').fillna(0)
+        cluster_data = macro_features[numeric_cols].ffill().fillna(0)
 
         # Standardize the data
         scaler = StandardScaler()
