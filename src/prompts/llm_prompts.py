@@ -8,6 +8,8 @@ def get_prompt(prompt_type: str, **kwargs: Any) -> str:
         return _get_news_enrichment_prompt(**kwargs)
     elif prompt_type == "analytics_explanation":
         return _get_analytics_prompt(**kwargs)
+    elif prompt_type == "hpo_budget_planning":
+        return _get_hpo_planning_prompt(**kwargs)
     else:
         return f"Prompt type {prompt_type} not found."
 
@@ -33,3 +35,36 @@ JSON Output:
 
 def _get_analytics_prompt(**kwargs) -> str:
     return "Analyze the provided financial metrics and provide insights."
+
+def _get_hpo_planning_prompt(total_trials: int, min_trials: int, max_trials: int, family_performance_json: str) -> str:
+    return f"""
+You are an expert Machine Learning Engineer specializing in Time Series Forecasting.
+Your task is to allocate a hyperparameter optimization (HPO) budget across different model families based on their past performance.
+
+Constraints:
+- Total Budget: {total_trials} trials
+- Min Trials per Family: {min_trials}
+- Max Trials per Family: {max_trials}
+
+Past Performance (JSON):
+{family_performance_json}
+
+Task:
+1. Analyze the past performance.
+2. Allocate trials to model families. Give more trials to promising families (low MAPE, high accuracy) or unexplored ones.
+3. Return a JSON object with the plan.
+
+JSON Format:
+{{
+    "jobs": [
+        {{
+            "model_family": "string",
+            "priority": "high|medium|low",
+            "n_trials": int,
+            "search_space": {{ "param": "range" }},
+            "notes": "reasoning"
+        }}
+    ],
+    "global_notes": "overall strategy"
+}}
+"""

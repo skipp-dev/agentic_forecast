@@ -1,6 +1,8 @@
 from typing import List, Dict, Any
 from dataclasses import dataclass
 import logging
+import json
+import re
 
 logger = logging.getLogger(__name__)
 
@@ -62,8 +64,40 @@ class LLMHPOPlannerAgent:
         logger.info("Generating HPO plan")
         response = self.llm.generate(prompt, temperature=0.2)
         
-        # For now, return a simple plan since LLM returns text
-        return HPOPlan(
-            jobs=[],
-            global_notes=response
-        )
+        try:
+            # Extract JSON from code block if present
+            json_match = re.search(r'```json\s*(.*?)\s*```', response, re.DOTALL)
+            if json_match:
+                json_str = json_match.group(1)
+            else:
+                # Try to find the first { and last }
+                start = response.find('{')
+                end = response.rfind('}')
+                if start != -1 and end != -1:
+                    json_str = response[start:end+1]
+                else:
+                    json_str = response
+                
+            data = json.loads(json_str)
+            
+            jobs = []
+            for job_data in data.get('jobs', []):
+                jobs.append(HPOJob(
+                    model_family=job_data.get('model_family', 'Unknown'),
+                    priority=job_data.get('priority', 'medium'),
+                    n_trials=job_data.get('n_trials', 0),
+                    search_space=job_data.get('search_space', {}),
+                    notes=job_data.get('notes', '')
+                ))
+                
+            return HPOPlan(
+                jobs=jobs,
+                global_notes=data.get('global_notes', '')
+            )
+            
+        except Exception as e:
+            logger.error(f"Failed to parse LLM HPO plan: {e}")
+            return HPOPlan(
+                jobs=[],
+                global_notes=f"Failed to parse plan. Raw response: {response}"
+            )
