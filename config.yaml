@@ -41,7 +41,7 @@ scaling:
   batch_delay: 5   # Minimum delay between batches
 
   # Parallel processing - Maximum concurrency
-  max_workers: 32  # Maximum concurrent workers
+  max_workers: 10  # Maximum concurrent workers
 
   # Memory management - Maximum memory allocation
   max_memory_gb: 64  # Maximum memory usage before cleanup
@@ -49,7 +49,7 @@ scaling:
 # --- Alpha Vantage Configuration ---
 alpha_vantage:
   # API call rate limit (calls per minute) - Premium tier
-  rate_limit: 1200
+  rate_limit: 300
   # Your Alpha Vantage API key (get from https://www.alphavantage.co/support/#api-key)
   api_key: "${ALPHA_VANTAGE_API_KEY}"
 
