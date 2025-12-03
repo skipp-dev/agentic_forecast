@@ -2,9 +2,12 @@ import os
 import sys
 import pandas as pd
 import logging
+import time
 from typing import List, Dict, Any
 
 from models.model_zoo import ModelZoo, DataSpec, HPOConfig, ModelTrainingResult
+from src.utils.champion_selection import select_champion_model, ModelMetrics
+from src.data.model_registry import ModelRegistry
 
 logger = logging.getLogger(__name__)
 
@@ -26,6 +29,7 @@ class HPOAgent:
         self.data_path = data_path
         self.model_zoo = ModelZoo()
         self.results: Dict[str, Dict[str, ModelTrainingResult]] = {}
+        self.model_registry = ModelRegistry()
 
     def _load_data(self, symbol: str) -> pd.DataFrame:
         """Loads and prepares reference data for a given symbol."""
@@ -98,6 +102,9 @@ class HPOAgent:
                 logger.info(f"Training BaselineLinear for {symbol}...")
                 self.results[symbol]['BaselineLinear'] = self.model_zoo.train_baseline_linear(data_spec)
 
+                logger.info(f"Training AutoDLinear for {symbol}...")
+                self.results[symbol]['AutoDLinear'] = self.model_zoo.train_autodlinear(data_spec, hpo_config_small)
+
                 logger.info(f"Training AutoNHITS for {symbol}...")
                 self.results[symbol]['AutoNHITS'] = self.model_zoo.train_autonhits(data_spec, hpo_config_small)
 
@@ -110,16 +117,53 @@ class HPOAgent:
         self.print_summary()
 
     def print_summary(self):
-        """Prints a summary of the HPO session results."""
+        """Prints a summary of the HPO session results and selects champions."""
         logger.info("--- HPO Session Summary ---")
         for symbol, results in self.results.items():
             logger.info(f"--- Results for {symbol} ---")
+            
+            model_metrics_list = []
+            
             for model_family, result in results.items():
                 if result:
                     logger.info(f"  - {model_family}:")
                     logger.info(f"    - Best MAPE: {result.best_val_mape:.4f}")
                     logger.info(f"    - Best MAE:  {result.best_val_mae:.4f}")
                     logger.info(f"    - Best Model ID: {result.best_model_id}")
+                    
+                    # Create ModelMetrics for champion selection
+                    # Note: SMAPE and Directional Accuracy are not currently returned by ModelZoo
+                    # We will use MAPE as proxy for SMAPE and 0.5 for DA if missing
+                    # In a real implementation, ModelZoo should return these metrics
+                    mape = result.best_val_mape if result.best_val_mape is not None else 1.0
+                    smape = mape # Proxy
+                    da = 0.5 # Default
+                    
+                    metrics = ModelMetrics(
+                        family=model_family,
+                        mape=mape,
+                        smape=smape,
+                        directional_accuracy=da
+                    )
+                    model_metrics_list.append(metrics)
+            
+            if model_metrics_list:
+                try:
+                    selection = select_champion_model(model_metrics_list)
+                    logger.info(f"  >>> CHAMPION: {selection.champion.family}")
+                    logger.info(f"  >>> Reason: {selection.reason}")
+                    
+                    # Update Registry
+                    self.model_registry.set_champion_model(
+                        symbol, 
+                        selection.champion.family, 
+                        selection.reason
+                    )
+                    self.model_registry.set_last_hpo_run(symbol, time.time())
+                    
+                except Exception as e:
+                    logger.error(f"  >>> Error selecting champion: {e}")
+
         logger.info("--------------------------")
 
 if __name__ == '__main__':

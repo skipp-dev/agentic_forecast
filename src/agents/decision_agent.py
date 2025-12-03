@@ -1,6 +1,8 @@
 import pandas as pd
 import numpy as np
+import time
 from typing import Dict, List, Optional
+from src.data.model_registry import ModelRegistry
 
 class DecisionAgent:
     """
@@ -16,6 +18,9 @@ class DecisionAgent:
         self.model_diversity_weight = self.config.get('model_diversity_weight', 0.1)
         self.risk_adjustment_factor = self.config.get('risk_adjustment_factor', 0.05)
         self.market_regime_sensitivity = self.config.get('market_regime_sensitivity', 0.8)
+        
+        # Initialize Model Registry
+        self.model_registry = ModelRegistry()
 
     def select_best_model(self, performance_summary: pd.DataFrame, anomalies: Dict = None) -> Dict[str, Dict[str, any]]:
         """
@@ -162,8 +167,29 @@ class DecisionAgent:
 
     def should_run_hpo(self, performance_summary: pd.DataFrame, anomalies: Dict = None, market_conditions: Dict = None, raw_data: Dict = None) -> Dict[str, any]:
         """
-        Enhanced HPO triggering logic considering performance, anomalies, and market conditions.
+        Enhanced HPO triggering logic considering performance, anomalies, market conditions, and age.
         """
+        # Check age-based trigger first
+        if raw_data:
+            for symbol in raw_data.keys():
+                last_run = self.model_registry.get_last_hpo_run(symbol)
+                if last_run is None:
+                    return {
+                        'should_run': True,
+                        'reason': f"Initial HPO run required for {symbol}",
+                        'confidence': 1.0,
+                        'target_symbols': [symbol]
+                    }
+                
+                max_age_seconds = 7 * 24 * 3600 # 7 days
+                if (time.time() - last_run) > max_age_seconds:
+                    return {
+                        'should_run': True,
+                        'reason': f"HPO age limit exceeded for {symbol} (Last run: {time.ctime(last_run)})",
+                        'confidence': 1.0,
+                        'target_symbols': [symbol]
+                    }
+
         if performance_summary.empty:
             return {
                 'should_run': False,

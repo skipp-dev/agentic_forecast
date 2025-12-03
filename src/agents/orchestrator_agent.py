@@ -10,6 +10,7 @@ Extends the existing SupervisorAgent with advanced capabilities:
 
 import os
 import sys
+import time
 from typing import Dict, Any, Optional
 from datetime import datetime
 import logging
@@ -21,6 +22,7 @@ sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 from agents.supervisor_agent import SupervisorAgent
 from graphs.state import GraphState
 from src.gpu_services import get_gpu_services
+from src.data.model_registry import ModelRegistry
 from agents.hyperparameter_search_agent import HyperparameterSearchAgent
 from agents.drift_monitor_agent import DriftMonitorAgent
 from agents.feature_engineer_agent import FeatureEngineerAgent
@@ -43,6 +45,9 @@ class OrchestratorAgent(SupervisorAgent):
 
         # Initialize GPU services
         self.gpu_services = get_gpu_services()
+        
+        # Initialize Model Registry
+        self.model_registry = ModelRegistry()
 
         # Initialize advanced agents
         self.hyperparameter_agent = HyperparameterSearchAgent(gpu_services=self.gpu_services)
@@ -137,7 +142,29 @@ class OrchestratorAgent(SupervisorAgent):
     def _should_run_hyperparameter_search(self, state: GraphState) -> bool:
         """Determine if hyperparameter search should be run."""
         # Run HPO if no recent search or performance is poor
-        return hasattr(state, 'run_hpo') and state.run_hpo
+        
+        # Check explicit flag first
+        if hasattr(state, 'run_hpo') and state.run_hpo:
+            return True
+            
+        # Check age-based trigger
+        symbols = state.get('symbols', [])
+        if not symbols and hasattr(state, 'raw_data'):
+             symbols = list(state.raw_data.keys())
+             
+        for symbol in symbols:
+            last_run = self.model_registry.get_last_hpo_run(symbol)
+            if last_run is None:
+                logger.info(f"HPO trigger: No previous run for {symbol}")
+                return True
+            
+            # Default 7 days age limit
+            max_age_seconds = 7 * 24 * 3600 
+            if (time.time() - last_run) > max_age_seconds:
+                logger.info(f"HPO trigger: Age limit exceeded for {symbol}")
+                return True
+
+        return False
 
     def _should_run_advanced_drift_check(self, state: GraphState) -> bool:
         """Determine if advanced drift checking should be used."""
@@ -190,7 +217,12 @@ class OrchestratorAgent(SupervisorAgent):
 
         logger.info(f"Triggering hyperparameter search for {symbol} {model_type}")
 
-        return self.hyperparameter_agent.run_search(symbol, model_type)
+        result = self.hyperparameter_agent.run_search(symbol, model_type)
+        
+        # Update registry timestamp
+        self.model_registry.set_last_hpo_run(symbol, time.time())
+        
+        return result
 
     def analyze_spectral_drift(self, symbol: str) -> Dict[str, Any]:
         """Analyze spectral drift for a symbol."""
