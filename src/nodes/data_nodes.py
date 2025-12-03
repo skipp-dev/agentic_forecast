@@ -45,7 +45,19 @@ def _load_data_sync(state: GraphState) -> GraphState:
     fundamentals_agent = None
     cross_asset_features = None
     
-    if config.get('fmp', {}).get('enabled', False) and os.getenv('FMP_API_KEY'):
+    # Check config and run_type
+    run_type = state.get('run_type', 'DAILY')
+    # Also check env var as fallback
+    if not run_type and os.environ.get('RUN_TYPE'):
+        run_type = os.environ.get('RUN_TYPE')
+        
+    config_fmp_enabled = config.get('fmp', {}).get('enabled', False)
+    
+    # Disable FMP for BACKTEST unless explicitly enabled (fail-safe)
+    if run_type == 'BACKTEST' and not config.get('fmp', {}).get('allow_in_backtest', False):
+        logger.info("ℹ️ FMP Fundamentals disabled for BACKTEST run")
+        fmp_enabled = False
+    elif config_fmp_enabled and os.getenv('FMP_API_KEY'):
         try:
             from ..agents.fundamentals_data_agent import FundamentalsDataAgent
             from ..data.cross_asset_features import CrossAssetFeatures
@@ -56,9 +68,12 @@ def _load_data_sync(state: GraphState) -> GraphState:
             logger.info("✅ FMP Fundamentals enabled")
         except Exception as e:
             logger.warning(f"Failed to initialize FMP components: {e}")
+            fmp_enabled = False
 
     logger.info(f"Fetching historical data for {len(symbols)} symbols from {start_date} to {end_date}")
 
+    # 1. Fetch Prices
+    prices_dict = {}
     for i, symbol in enumerate(symbols):
         try:
             logger.info(f"[{i+1}/{len(symbols)}] Fetching data for {symbol}...")
@@ -76,57 +91,71 @@ def _load_data_sync(state: GraphState) -> GraphState:
                         time.sleep(2 ** attempt)  # Exponential backoff
                     else:
                         logger.error(f"All {max_retries} attempts failed for {symbol}: {e}")
-                        # Don't raise, just log and continue to next symbol
                         pass
 
             if data is not None and not data.empty:
                 # Filter to date range
                 data = data[(data.index >= start_date) & (data.index <= end_date)]
-
-                # Convert index to string for JSON serialization
-                data.index = data.index.astype(str)
-
-                # Validate data structure
+                # Ensure index is datetime for merging
+                data.index = pd.to_datetime(data.index)
+                
                 if _validate_data_structure(data):
-                    
-                    # Enrich with fundamentals if enabled
-                    if fmp_enabled and fundamentals_agent and cross_asset_features:
-                        try:
-                            # Fetch fundamentals (cached internally by agent)
-                            fundamentals = fundamentals_agent.update_symbol_fundamentals(symbol)
-                            
-                            if fundamentals is not None and not fundamentals.empty:
-                                # Merge using cross_asset_features logic
-                                # Note: We need to convert index back to datetime for merging
-                                price_df = data.copy()
-                                price_df.index = pd.to_datetime(price_df.index)
-                                
-                                # Forward fill fundamentals to match price dates
-                                fund_daily = cross_asset_features._forward_fill_fundamentals(fundamentals, price_df.index)
-                                
-                                # Join
-                                data = price_df.join(fund_daily, how='left')
-                                
-                                # Convert index back to string
-                                data.index = data.index.astype(str)
-                                logger.info(f"   + Enriched {symbol} with {len(fundamentals.columns)} fundamental features")
-                        except Exception as e:
-                            logger.warning(f"Failed to enrich {symbol} with fundamentals: {e}")
-
-                    raw_data[symbol] = data
-                    logger.info(f"✅ Loaded data for {symbol} from {primary_source.upper()} ({len(data)} rows).")
+                    prices_dict[symbol] = data
                 else:
-                    error_msg = f"Data validation failed for symbol {symbol}."
-                    state['errors'].append(error_msg)
-                    logger.error(error_msg)
+                    state['errors'].append(f"Data validation failed for {symbol}")
             else:
-                error_msg = f"No data returned for symbol {symbol} from {primary_source.upper()}."
-                state['errors'].append(error_msg)
-                logger.error(error_msg)
+                state['errors'].append(f"No data for {symbol}")
+                
         except Exception as e:
-            error_msg = f"Error loading data for {symbol}: {e}"
-            state['errors'].append(error_msg)
-            logger.error(error_msg)
+            state['errors'].append(f"Error loading data for {symbol}: {e}")
+
+    # 2. Fetch Fundamentals (if enabled)
+    fundamentals_dict = {}
+    if fmp_enabled and fundamentals_agent:
+        logger.info("Fetching fundamentals for enrichment...")
+        for symbol in prices_dict.keys():
+            try:
+                # Fetch fundamentals (cached internally by agent)
+                # We use update_symbol_fundamentals which handles caching and feature calculation
+                fund_df = fundamentals_agent.update_symbol_fundamentals(symbol)
+                if fund_df is not None and not fund_df.empty:
+                    fundamentals_dict[symbol] = fund_df
+            except Exception as e:
+                logger.warning(f"Failed to fetch fundamentals for {symbol}: {e}")
+
+    # 3. Merge
+    if fmp_enabled and cross_asset_features and fundamentals_dict:
+        try:
+            merged_df = cross_asset_features.merge_prices_and_fundamentals(prices_dict, fundamentals_dict)
+            
+            # Split back to dict for state['raw_data']
+            # merged_df has MultiIndex (date, symbol)
+            if not merged_df.empty:
+                for symbol in prices_dict.keys():
+                    if symbol in merged_df.index.get_level_values('symbol'):
+                        # Extract symbol data
+                        symbol_data = merged_df.xs(symbol, level='symbol')
+                        # Ensure index is string for JSON serialization compatibility if needed, 
+                        # but usually we keep it as datetime until serialization.
+                        # The original code converted to string: data.index = data.index.astype(str)
+                        # We should probably do that at the end.
+                        raw_data[symbol] = symbol_data
+                        logger.info(f"   + Enriched {symbol} with fundamentals (Total cols: {len(symbol_data.columns)})")
+                    else:
+                        # Fallback to price only if merge failed for this symbol
+                        raw_data[symbol] = prices_dict[symbol]
+            else:
+                raw_data = prices_dict
+        except Exception as e:
+            logger.error(f"Error during cross-asset merge: {e}")
+            raw_data = prices_dict
+    else:
+        raw_data = prices_dict
+
+    # Final cleanup: Convert indices to string for consistency/serialization
+    for symbol, df in raw_data.items():
+        if isinstance(df.index, pd.DatetimeIndex):
+            df.index = df.index.astype(str)
 
     state['raw_data'] = raw_data
     return state

@@ -119,6 +119,9 @@ class GuardrailAgent:
 
         # Assess market volatility from data patterns
         market_volatility = self._assess_market_volatility(raw_data)
+        
+        # Get news shocks
+        news_shocks = state.get('news_shocks', {})
 
         for action in recommended_actions:
             symbol = self._extract_symbol(action)
@@ -127,6 +130,14 @@ class GuardrailAgent:
             if symbol in high_risk_symbols:
                 entry = (
                     f"Guardrail blocked '{action}' because {symbol} has elevated risk."
+                )
+                guardrail_entries.append(entry)
+                continue
+                
+            # News Shock Check
+            if news_shocks.get(symbol, False):
+                entry = (
+                    f"Guardrail blocked '{action}' for {symbol}: Active News Shock detected."
                 )
                 guardrail_entries.append(entry)
                 continue

@@ -5,6 +5,8 @@ import signal
 import sys
 import logging
 import tensorflow as tf
+import argparse
+import re
 
 # Set up logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -29,15 +31,17 @@ os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'   # Reduce TensorFlow logging (0=INFO, 
 import asyncio
 import pandas as pd
 import torch
-import argparse
+
+from src.core.run_context import RunType, RunContext
+from src.pipelines import run_daily_pipeline, run_weekend_hpo_pipeline, run_backtest_pipeline
 
 def parse_args():
     """Parse command line arguments"""
     parser = argparse.ArgumentParser(description='Agentic Forecast System')
     parser.add_argument('--task', choices=['full', 'llm_analytics_only'], default='full',
                        help='Task to run (default: full)')
-    parser.add_argument('--run_type', choices=['DAILY', 'WEEKEND_HPO', 'BACKTEST'],
-                       default='DAILY', help='Type of run (default: DAILY)')
+    parser.add_argument('--run_type', choices=[rt.value for rt in RunType],
+                       default=RunType.DAILY.value, help='Type of run (default: DAILY)')
     return parser.parse_args()
 
 # Parse args early to set environment variables before imports
@@ -49,43 +53,26 @@ if args.run_type == "BACKTEST":
     os.environ['RUN_TYPE'] = 'BACKTEST'
     print("Skipping NeuralForecast imports for BACKTEST mode")
 
-def build_initial_state(symbols, config, run_type='DAILY'):
-    """Build the initial GraphState with run_type"""
-    return GraphState(
-        symbols=symbols,
-        config=config,
-        run_type=run_type,  # Add run_type to state
-        raw_data={},
-        features={},
-        forecasts={},
-        performance_summary=pd.DataFrame(),
-        drift_metrics=pd.DataFrame(),
-        risk_kpis=pd.DataFrame(),
-        anomalies={},
-        recommended_actions=[],
-        executed_actions=[],
-        retrained_models={},
-        best_models={},
-        errors=[],
-        hpo_results={},
-        shap_results={},
-        analytics_summary=pd.DataFrame(),
-        hpo_decision={},
-        retraining_history=[],
-        guardrail_log=[],
-        hpo_triggered=False,
-        drift_detected=False,
-        edge_index=None,
-        node_features=None,
-        symbol_to_idx={}
-    )
-
 def load_config():
-    """Load configuration from config.yaml"""
+    """Load configuration from config.yaml with environment variable substitution"""
     config_path = "config.yaml"
     if os.path.exists(config_path):
         with open(config_path, 'r') as f:
-            return yaml.safe_load(f)
+            config = yaml.safe_load(f)
+            
+        # Helper to substitute env vars
+        def substitute_env_vars(item):
+            if isinstance(item, dict):
+                return {k: substitute_env_vars(v) for k, v in item.items()}
+            elif isinstance(item, list):
+                return [substitute_env_vars(v) for v in item]
+            elif isinstance(item, str):
+                # Replace ${VAR} with value from os.environ
+                pattern = re.compile(r'\$\{([^}]+)\}')
+                return pattern.sub(lambda m: os.environ.get(m.group(1), m.group(0)), item)
+            return item
+            
+        return substitute_env_vars(config)
     return {}
 
 def load_symbols_from_csv(csv_path="watchlist_ibkr.csv", max_symbols=None):
@@ -196,9 +183,6 @@ def setup_langsmith(config):
         os.environ['LANGCHAIN_TRACING_V2'] = 'false'
         print("⚠️ LangSmith tracing disabled")
 
-from src.graphs.main_graph import create_main_graph
-from src.graphs.state import GraphState
-
 def main():
     """Main entry point for the agentic_forecast application"""
 
@@ -232,8 +216,6 @@ def main():
     # Setup LangSmith tracing
     setup_langsmith(config)
     
-    app = create_main_graph(config)
-    
     # Load symbols from IBKR watchlist CSV
     # Use config max_symbols setting for all run types
     max_symbols = config.get('scaling', {}).get('max_symbols', None)
@@ -247,17 +229,19 @@ def main():
     
     # Handle different tasks
     if args.task == "full":
-        # Build initial state with run_type
-        initial_state = build_initial_state(symbols, config, args.run_type)
+        run_type = RunType(args.run_type)
+        ctx = RunContext.create(run_type=run_type)
         
-        for output in app.stream(initial_state):
-            for key, value in output.items():
-                logger.info(f"Output from node '{key}':")
-                logger.info("---")
-                logger.info(str(value))
-            logger.info("\n---\n")
+        logging.info("Starting run", extra={"run_type": ctx.run_type.value, "run_id": ctx.run_id})
 
-        logger.info("Agentic workflow finished.")
+        if ctx.run_type == RunType.DAILY:
+            run_daily_pipeline(ctx, symbols, config)
+        elif ctx.run_type == RunType.WEEKEND_HPO:
+            run_weekend_hpo_pipeline(ctx, symbols, config)
+        elif ctx.run_type == RunType.BACKTEST:
+            run_backtest_pipeline(ctx, symbols, config)
+        else:
+            raise ValueError(f"Unsupported run_type: {ctx.run_type!r}")
         
     elif args.task == "llm_analytics_only":
         from src.analytics.llm_analytics_orchestrator import run_llm_analytics_explainer

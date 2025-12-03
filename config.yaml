@@ -33,7 +33,7 @@ ibkr:
 # --- Scaling Configuration ---
 scaling:
   # Maximum number of symbols to process in a single run
-  max_symbols: 600  # Run for all symbols in watchlist
+  max_symbols: 3  # Run for all symbols in watchlist
 
   # Batch processing settings - Maximum throughput
   batch_size: 100  # Maximum symbols per batch
@@ -96,21 +96,27 @@ anomaly_detection:
   # Number of anomalies required to block a model promotion.
   anomaly_threshold: 5
 
-# --- News API Configuration ---
-news_api:
-  # To enable news sentiment analysis, provide your NewsAPI key here or as an environment variable.
-  # You can get a free key from https://newsapi.org/
-  api_key: "${NEWS_API_KEY}" # Optional: Your NewsAPI key
-  rate_limit: 1 # FREE TIER: 100 requests per 24 hours total (not per minute!)
-  max_articles: 5 # Reduced for free tier
-
-# --- NewsAPI.ai Configuration ---
-newsapi_ai:
-  # To enable advanced news intelligence, provide your NewsAPI.ai key here or as an environment variable.
-  # Get from https://newsapi.ai/
-  api_key: "${NEWSAPI_AI_KEY}"
+# --- News Configuration ---
+news:
   enabled: true
-  rate_limit: 60 # Adjust based on your plan
+  provider: "newsapi_ai"  # "newsapi_ai" (Event Registry) or "newsapi_org"
+  api_key: "${NEWSAPI_AI_KEY}"
+  max_articles_per_symbol_per_day: 100
+  use_in_tft: true
+  use_in_graph_stgcnn: true
+  
+  # Shock detection thresholds
+  shock_thresholds:
+    sentiment_max_abs: 0.8
+    article_count_spike: 10
+    impact_categories: ["earnings", "guidance", "mna", "litigation", "macro"]
+
+# --- Auto Documentation Configuration ---
+auto_documentation:
+  enabled: true
+  report_format: "markdown"
+  include_json_summary: true
+  output_dir: "artifacts/reports"
 
 # --- LangSmith Configuration ---
 # To enable tracing, set the LANGCHAIN_TRACING_V2 environment variable to "true"

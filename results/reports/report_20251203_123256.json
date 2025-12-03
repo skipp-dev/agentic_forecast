@@ -1,0 +1,11 @@
+{
+  "report_id": "report_20251203_123256",
+  "timestamp": "20251203_123256",
+  "executive_summary": "The latest run of the forecasting platform processed 3 symbols but did not yield any performance improvements or actionable insights. Anomalies were detected, indicating potential issues that require further investigation. The health checks showed that while no critical issues were found, the absence of passed checks suggests a need for caution moving forward. Overall, the run highlights areas for improvement in model performance and optimization efforts.",
+  "performance_overview": {},
+  "risk_assessment": {},
+  "optimization_recommendations": {},
+  "research_insights": {},
+  "operational_notes": {},
+  "priority_actions": []
+}

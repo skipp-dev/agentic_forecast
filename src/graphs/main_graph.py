@@ -75,6 +75,7 @@ def create_main_graph(config: dict):
     # Add nodes
     graph.add_node("load_data", data_nodes.load_data_node)
     graph.add_node("news_data", agent_nodes.news_data_node)
+    graph.add_node("enrich_news", agent_nodes.llm_news_enrichment_node)
     graph.add_node("construct_graph", agent_nodes.graph_construction_node)
     graph.add_node("detect_drift", monitoring_nodes.drift_detection_node)
     graph.add_node("detect_anomalies", anomaly_detection_nodes.anomaly_detection_node)
@@ -93,11 +94,13 @@ def create_main_graph(config: dict):
     graph.add_node("execute_actions", execution_nodes.action_executor_node)
     # graph.add_node("run_explainability", agent_nodes.explainability_agent_node)
     graph.add_node("generate_report", reporting_nodes.generate_report_node)
+    graph.add_node("auto_documentation", agent_nodes.auto_documentation_node)
 
     # Define edges
     graph.set_entry_point("load_data")
     graph.add_edge("load_data", "news_data")
-    graph.add_edge("news_data", "construct_graph")
+    graph.add_edge("news_data", "enrich_news")
+    graph.add_edge("enrich_news", "construct_graph")
     graph.add_edge("construct_graph", "detect_drift")
     graph.add_edge("detect_drift", "detect_anomalies")
     graph.add_edge("detect_anomalies", "assess_risk")
@@ -128,6 +131,7 @@ def create_main_graph(config: dict):
     # graph.add_edge("run_explainability", "execute_actions")
     graph.add_edge("apply_guardrails", "execute_actions")
     graph.add_edge("execute_actions", "generate_report")
-    graph.add_edge("generate_report", END)
+    graph.add_edge("generate_report", "auto_documentation")
+    graph.add_edge("auto_documentation", END)
 
     return graph.compile()

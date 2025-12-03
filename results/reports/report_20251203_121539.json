@@ -1,0 +1,11 @@
+{
+  "report_id": "report_20251203_121539",
+  "timestamp": "20251203_121539",
+  "executive_summary": "The latest run of the forecasting platform processed 3 symbols but yielded no performance metrics due to the absence of evaluated models. Anomalies were detected that require attention, but no optimizations were completed. The health checks indicate that while there are no critical issues, the lack of passed checks suggests a need for further investigation. Overall, the platform is operational but facing significant challenges in performance evaluation and optimization.",
+  "performance_overview": {},
+  "risk_assessment": {},
+  "optimization_recommendations": {},
+  "research_insights": {},
+  "operational_notes": {},
+  "priority_actions": []
+}

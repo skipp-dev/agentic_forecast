@@ -1,0 +1,11 @@
+{
+  "report_id": "report_20251203_123414",
+  "timestamp": "20251203_123414",
+  "executive_summary": "The latest run of the forecasting platform processed 3 symbols but encountered significant challenges. No models were successfully evaluated, and all checks failed, indicating critical issues that need addressing. Anomalies were detected in the data, which may impact future forecasts. Immediate attention is required to resolve these issues and optimize the models for better performance.",
+  "performance_overview": {},
+  "risk_assessment": {},
+  "optimization_recommendations": {},
+  "research_insights": {},
+  "operational_notes": {},
+  "priority_actions": []
+}

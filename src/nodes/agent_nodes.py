@@ -1,8 +1,15 @@
 import pandas as pd
 import logging
+from datetime import datetime, timedelta
+from dataclasses import asdict
 
 from ..graphs.state import GraphState
 from ..agents.feature_agent import FeatureAgent
+from ..agents.news_data_agent import NewsDataAgent
+from ..agents.llm_news_agent import LLMNewsFeatureAgent
+from ..agents.auto_documentation_agent import AutoDocumentationAgent, MetricsSnapshot
+from ..features.news_analytics import detect_news_shock
+from ..data.cross_asset_features import CrossAssetFeatures
 import sys
 import os
 sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..'))
@@ -18,16 +25,57 @@ def feature_agent_node(state: GraphState) -> GraphState:
     """
     logger.info("--- Node: Feature Agent ---")
 
+    # Prepare news features if available (common for both paths)
+    news_features_data = state.get('news_features')
+    news_features_df = pd.DataFrame()
+    if news_features_data:
+        news_features_df = pd.DataFrame(news_features_data)
+        if not news_features_df.empty:
+            news_features_df['date'] = pd.to_datetime(news_features_df['date'])
+            # Ensure index is set for efficient lookup
+            if 'symbol' in news_features_df.columns:
+                news_features_df = news_features_df.set_index(['date', 'symbol'])
+
+    # Helper function to merge news
+    def merge_news(features_df, symbol):
+        if not news_features_df.empty:
+            try:
+                # Extract news for this symbol
+                if symbol in news_features_df.index.get_level_values('symbol'):
+                    symbol_news = news_features_df.xs(symbol, level='symbol')
+                    # Join
+                    features_df = features_df.join(symbol_news, how='left')
+                    
+                    # Fill NaNs
+                    news_cols = ['news_sentiment', 'news_impact_score', 'news_volatility_score', 'news_count']
+                    for col in news_cols:
+                        if col in features_df.columns:
+                            features_df[col] = features_df[col].fillna(0)
+                    logger.info(f"Merged news features for {symbol}")
+            except Exception as e:
+                logger.warning(f"Failed to merge news features for {symbol}: {e}")
+        return features_df
+
     # Import FeatureEngineer locally to avoid module-level import issues
     try:
-        from pipelines.run_features import FeatureEngineer
-        agent = FeatureEngineer()
+        try:
+            from pipelines.run_features import FeatureEngineer
+        except ImportError:
+            # Try importing from root if pipelines is not a package
+            import sys
+            # Add root to path if not already there (it should be)
+            # Try direct import assuming root is in path
+            from pipelines.run_features import FeatureEngineer
 
+        agent = FeatureEngineer()
+        
         # Process all symbols in the raw_data dictionary
         features = {}
         for symbol, data in state['raw_data'].items():
             try:
                 features_df = agent.engineer_features_for_symbol(symbol, data, experiment="default")
+                features_df = merge_news(features_df, symbol)
+
                 # Convert DataFrame to serializable format for LangSmith tracing
                 features_df.index = features_df.index.astype(str)
                 features[symbol] = features_df.to_dict('index')
@@ -44,7 +92,13 @@ def feature_agent_node(state: GraphState) -> GraphState:
     except ImportError as e:
         logger.warning(f"FeatureEngineer import failed ({e}), falling back to basic FeatureAgent")
         # Fallback to original simple feature agent
+        agent = FeatureAgent()
         features = agent.generate_features(state['raw_data'])
+        
+        # Merge news features for fallback path too
+        for symbol, df in features.items():
+            features[symbol] = merge_news(df, symbol)
+
         # Convert DataFrames to serializable format
         serializable_features = {}
         for symbol, df in features.items():
@@ -303,35 +357,41 @@ def news_data_node(state: GraphState) -> GraphState:
     """
     logger.info("--- Node: News Data Agent ---")
     
+    config = state.get('config', {})
+    # Check if news is enabled (support both old and new config structure)
+    news_config = config.get('news', {})
+    if not news_config.get('enabled', False):
+        # Fallback to old keys if 'news' section missing or disabled
+        if not config.get('newsapi_ai', {}).get('enabled', False) and not config.get('news_api', {}).get('enabled', False):
+            logger.info("News collection disabled in config.")
+            state['news_items'] = {}
+            return state
+
     if _SKIP_LLM_AGENTS:
         logger.info("Skipping news data collection for BACKTEST mode")
-        state['news_insights'] = None
+        state['news_items'] = {}
         return state
     
     try:
-        agent = OpenAIResearchAgent()
+        agent = NewsDataAgent(config)
         symbols = state.get('symbols', [])
         
-        # Conduct research for a subset of symbols to avoid API limits
-        research_symbols = symbols[:10]  # Limit to first 10 symbols
+        # Determine date range (e.g. last 30 days for context)
+        end_date = datetime.now().strftime('%Y-%m-%d')
+        start_date = (datetime.now() - timedelta(days=30)).strftime('%Y-%m-%d')
         
-        insights = agent.conduct_market_research(symbols=research_symbols, days_back=7)
+        news_results = agent.fetch_news(symbols, start_date, end_date)
         
-        # Store news insights in state
-        state['news_insights'] = insights
-        state['market_sentiment'] = insights.market_sentiment
-        state['key_news'] = [article.__dict__ for article in insights.key_news]
+        # Store raw news items in state
+        state['news_items'] = news_results
         
-        logger.info(f"Gathered news insights for {len(research_symbols)} symbols.")
+        logger.info(f"Gathered news for {len(news_results)} symbols.")
         
     except Exception as e:
         logger.error(f"News data collection failed: {e}")
-        state['news_insights'] = None
+        state['news_items'] = {}
     
     return state
-
-if not _SKIP_LLM_AGENTS:
-    from ..agents.llm_news_agent import LLMNewsFeatureAgent, RawNewsItem, EnrichedNewsFeature
 
 def llm_news_enrichment_node(state: GraphState) -> GraphState:
     """
@@ -342,6 +402,14 @@ def llm_news_enrichment_node(state: GraphState) -> GraphState:
     if _SKIP_LLM_AGENTS:
         logger.info("Skipping LLM news enrichment for BACKTEST mode")
         state['enriched_news'] = []
+        state['news_features'] = None
+        return state
+
+    news_items = state.get('news_items', {})
+    if not news_items:
+        logger.info("No news items to enrich.")
+        state['enriched_news'] = []
+        state['news_features'] = None
         return state
 
     try:
@@ -349,46 +417,39 @@ def llm_news_enrichment_node(state: GraphState) -> GraphState:
         llm_client = create_news_features_llm()
 
         agent = LLMNewsFeatureAgent(llm_client)
-
-        # Get news articles from previous research
-        news_insights = state.get('news_insights')
-        if not news_insights or not hasattr(news_insights, 'key_news'):
-            logger.warning("No news insights available for enrichment")
-            state['enriched_news'] = []
-            return state
-
-        # Convert ResearchInsights articles to RawNewsItem format
-        enriched_features = []
-
-        for article in news_insights.key_news[:10]:  # Limit to avoid rate limits
-            try:
-                # Convert article to RawNewsItem format
-                raw_item = RawNewsItem(
-                    symbol=article.symbols[0] if article.symbols else "UNKNOWN",
-                    timestamp=article.published_at,
-                    headline=article.title,
-                    body=article.content,
-                    provider=article.source
-                )
-
-                # Enrich the news item
-                enriched_feature = agent.enrich_item(raw_item)
-                enriched_features.append(enriched_feature.__dict__)
-
-                logger.info(f"Enriched news for {raw_item.symbol}")
-
-            except Exception as e:
-                logger.warning(f"Failed to enrich news item: {e}")
+        
+        all_enriched = []
+        
+        for symbol, items in news_items.items():
+            if not items:
                 continue
-
+                
+            logger.info(f"Enriching {len(items)} news items for {symbol}...")
+            # Enrich batch
+            enriched = agent.enrich_batch(items)
+            all_enriched.extend(enriched)
+            
         # Store enriched news features
-        state['enriched_news'] = enriched_features
+        state['enriched_news'] = [asdict(item) for item in all_enriched] if all_enriched else []
+        
+        # Aggregate into daily features
+        news_features_df = agent.aggregate_features(all_enriched)
+        
+        # Convert to serializable format (dict of dicts)
+        if not news_features_df.empty:
+            # Reset index to make it serializable
+            df_reset = news_features_df.reset_index()
+            df_reset['date'] = df_reset['date'].astype(str)
+            state['news_features'] = df_reset.to_dict('records')
+        else:
+            state['news_features'] = None
 
-        logger.info(f"Enriched {len(enriched_features)} news items with structured features")
+        logger.info(f"Enriched {len(all_enriched)} news items and aggregated features.")
 
     except Exception as e:
         logger.error(f"LLM news enrichment failed: {e}")
         state['enriched_news'] = []
+        state['news_features'] = None
 
     return state
 
@@ -416,9 +477,15 @@ def llm_analytics_node(state: GraphState) -> GraphState:
         explanation = run_llm_analytics_explainer()
 
         # Store results in state for downstream nodes
-        state['llm_analytics_summary'] = explanation.get('global_summary', 'LLM analysis completed')
-        state['llm_actions'] = explanation.get('recommendations', [])
-        state['llm_notes'] = explanation  # Store full explanation dict
+        if isinstance(explanation, dict):
+            state['llm_analytics_summary'] = explanation.get('global_summary', 'LLM analysis completed')
+            state['llm_actions'] = explanation.get('recommendations', [])
+            state['llm_notes'] = explanation  # Store full explanation dict
+        else:
+            logger.warning(f"LLM analytics returned unexpected type: {type(explanation)}")
+            state['llm_analytics_summary'] = str(explanation)
+            state['llm_actions'] = []
+            state['llm_notes'] = {}
 
         logger.info("Generated LLM analytics insights with JSON/Markdown reports and LangSmith tracing.")
 
@@ -514,6 +581,11 @@ def forecast_agent_node(state: GraphState) -> GraphState:
 
         # Process each symbol's forecasts
         interpreted_forecasts = {}
+        news_shocks = {}
+        
+        # Get news features for shock detection
+        news_features_list = state.get('news_features', [])
+        config = state.get('config', {})
 
         for symbol in state.get('symbols', []):
             symbol_forecasts = forecasts.get(symbol, [])
@@ -527,24 +599,78 @@ def forecast_agent_node(state: GraphState) -> GraphState:
                 symbol_data = analytics_summary[analytics_summary['symbol'] == symbol]
                 if not symbol_data.empty:
                     # Use the best performing model's metrics
-                    best_row = symbol_data.loc[symbol_data['mape'].idxmin()]
-                    symbol_metrics = {
-                        'directional_accuracy': best_row.get('directional_accuracy', 0),
-                        'smape': best_row.get('smape', 0),
-                        'mae': best_row.get('mae', 0),
-                        'mae_vs_baseline': best_row.get('mae_vs_baseline', 1.0)
-                    }
+                    try:
+                        # Check if we have valid MAPE values
+                        if symbol_data['mape'].isna().all():
+                            # If all MAPEs are NaN (e.g. future forecast only), use the first available model
+                            # or specifically look for 'ensemble'
+                            if 'ensemble' in symbol_data['model_family'].values:
+                                best_row = symbol_data[symbol_data['model_family'] == 'ensemble'].iloc[0]
+                            else:
+                                best_row = symbol_data.iloc[0]
+                            logger.info(f"All MAPEs are NaN for {symbol}, defaulting to {best_row.get('model_family')} for metrics")
+                        else:
+                            best_row = symbol_data.loc[symbol_data['mape'].idxmin()]
+                        
+                        symbol_metrics = {
+                            'directional_accuracy': best_row.get('directional_accuracy', 0),
+                            'smape': best_row.get('smape', 0),
+                            'mae': best_row.get('mae', 0),
+                            'mae_vs_baseline': best_row.get('mae_vs_baseline', 1.0)
+                        }
+                    except Exception as e:
+                        logger.warning(f"Error extracting metrics for {symbol}: {e}")
+                        symbol_metrics = {'directional_accuracy': 0, 'smape': 0, 'mae': 0, 'mae_vs_baseline': 1.0}
+
+            # Detect News Shock
+            symbol_news_aggs = [item for item in news_features_list if item.get('symbol') == symbol] if news_features_list else []
+            is_news_shock = detect_news_shock(symbol, symbol_news_aggs, config.get('news', {}).get('shock_thresholds'))
+            
+            current_guardrail_flags = guardrail_flags.copy()
+            if is_news_shock:
+                current_guardrail_flags.append('news_shock_active')
+                news_shocks[symbol] = True
+                logger.info(f"News shock detected for {symbol}")
+            else:
+                news_shocks[symbol] = False
 
             # Create regime info
             regime_info = {
-                'guardrail_flags': guardrail_flags
+                'guardrail_flags': current_guardrail_flags
             }
+
+            # Transform forecasts from Dict[model_family, DataFrame] to List[Dict]
+            # Expected format: [{'horizon': h, 'model_family': family, 'predicted_return': val}, ...]
+            formatted_forecasts = []
+            if isinstance(symbol_forecasts, dict):
+                for family, df in symbol_forecasts.items():
+                    if isinstance(df, pd.DataFrame) and not df.empty:
+                        # Assuming df has columns ['ds', family] or just [family]
+                        # and rows correspond to horizons 1, 2, 3...
+                        try:
+                            # Check if family column exists
+                            col_name = family if family in df.columns else df.columns[-1] # Fallback to last column
+                            
+                            for i, row in df.iterrows():
+                                val = row[col_name]
+                                # Horizon is index + 1 (assuming 0-based index implies horizon 1)
+                                h = i + 1 
+                                formatted_forecasts.append({
+                                    "horizon": h,
+                                    "model_family": family,
+                                    "predicted_return": float(val)
+                                })
+                        except Exception as e:
+                            logger.warning(f"Failed to format forecast for {symbol} {family}: {e}")
+            elif isinstance(symbol_forecasts, list):
+                # Already in list format?
+                formatted_forecasts = symbol_forecasts
 
             # Interpret forecasts for this symbol
             try:
                 interpretation = agent.interpret_forecasts(
                     symbol=symbol,
-                    forecasts=symbol_forecasts,
+                    forecasts=formatted_forecasts,
                     error_metrics=symbol_metrics,
                     regime_and_guardrail_info=regime_info
                 )
@@ -556,6 +682,7 @@ def forecast_agent_node(state: GraphState) -> GraphState:
 
         # Store interpreted forecasts in state
         state['interpreted_forecasts'] = interpreted_forecasts
+        state['news_shocks'] = news_shocks
 
         logger.info(f"Forecast agent completed interpretation for {len(interpreted_forecasts)} symbols")
 
@@ -564,4 +691,60 @@ def forecast_agent_node(state: GraphState) -> GraphState:
         state['interpreted_forecasts'] = {}
         state['errors'].append(f"Forecast agent error: {e}")
 
+    return state
+
+def auto_documentation_node(state: GraphState) -> GraphState:
+    """
+    Runs the AutoDocumentation agent to generate a run report.
+    """
+    logger.info("--- Node: Auto Documentation Agent ---")
+    
+    config = state.get('config', {})
+    if not config.get('auto_documentation', {}).get('enabled', True):
+        logger.info("Auto-documentation disabled.")
+        return state
+        
+    try:
+        # Initialize agent
+        # We can pass an LLM client if available, or None for fallback
+        llm_client = None
+        if not _SKIP_LLM_AGENTS:
+            try:
+                from src.llm.llm_factory import create_reporting_llm
+                llm_client = create_reporting_llm()
+            except ImportError:
+                pass
+                
+        agent = AutoDocumentationAgent(llm_client, config.get('auto_documentation', {}))
+        
+        # Prepare snapshots
+        metrics_snapshot = MetricsSnapshot(
+            model_performance=state.get('analytics_summary', []),
+            guardrail_counts=state.get('guardrail_log', []), # Simplified
+            news_health=state.get('news_features', []), # Simplified
+            llm_usage={} # Not tracked yet
+        )
+        
+        run_context = {
+            'run_id': state.get('run_id', 'unknown'),
+            'run_type': os.environ.get('RUN_TYPE', 'DAILY')
+        }
+        
+        # Generate report
+        report = agent.generate_run_report(run_context, metrics_snapshot, config)
+        
+        # Save report
+        report_dir = os.path.join('artifacts', 'reports', run_context['run_type'], datetime.now().strftime('%Y-%m-%d'))
+        os.makedirs(report_dir, exist_ok=True)
+        report_path = os.path.join(report_dir, f"run_{run_context['run_id']}.md")
+        
+        with open(report_path, 'w') as f:
+            f.write(report.markdown_content)
+            
+        logger.info(f"Auto-documentation report saved to {report_path}")
+        state['report_path'] = report_path
+        
+    except Exception as e:
+        logger.error(f"Auto-documentation failed: {e}")
+        
     return state

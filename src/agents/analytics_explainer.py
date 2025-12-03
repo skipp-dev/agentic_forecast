@@ -40,8 +40,17 @@ class AnalyticsAgent:
 
             for model_family, forecast_df in model_forecasts.items():
                 
+                # Handle dict (serialized DataFrame)
+                if isinstance(forecast_df, dict):
+                    forecast_df = pd.DataFrame.from_dict(forecast_df, orient='index')
+
                 # Ensure forecast_df 'ds' column is datetime
-                forecast_df['ds'] = pd.to_datetime(forecast_df['ds'])
+                if 'ds' in forecast_df.columns:
+                    forecast_df['ds'] = pd.to_datetime(forecast_df['ds'])
+                else:
+                    # If ds is not a column, it might be the index or missing
+                    # Try to recover from index if it looks like a date
+                    pass # For now assume ds is a column as per contract
 
                 # Merge forecast with actuals
                 merged_df = pd.merge(

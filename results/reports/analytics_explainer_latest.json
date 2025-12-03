@@ -1,18 +1,18 @@
 {
-  "global_summary": "The overall health of the forecasting system appears stable, with metrics showing reasonable ranges and variability. However, the directional accuracy is alarmingly low, with a mean of only 0.013, indicating that the model struggles to predict the correct direction of price movements. The MAE and RMSE values are relatively low, suggesting that absolute errors are manageable, but the high maximum values indicate potential outliers. The absence of significant feature importance suggests that the model may not be leveraging relevant predictors effectively, which could be a point of concern for future improvements.",
+  "global_summary": "The overall health of the forecasting system appears stable, with metrics showing reasonable ranges and variability. However, the directional accuracy is alarmingly low, with a mean of only 0.013, indicating that the model struggles to predict the correct direction of price movements. The MAE and RMSE values suggest that while the absolute errors are manageable on average, there are instances of significantly larger errors, as indicated by the maximum values. The lack of variability in feature importance suggests that the model may not be leveraging relevant features effectively, which could be a concern for future predictions.",
   "metric_explanations": {
-    "mae": "The mean absolute error (MAE) is 2.18, which is acceptable, but the maximum value of 58.658 indicates that there are instances of significant errors. This suggests that while the model performs well on average, it may struggle with certain symbols or conditions.",
-    "mape": "The mean absolute percentage error (MAPE) is 0.039, which is relatively low, but the maximum value of 0.446 indicates that some predictions are significantly off. This could be due to outliers or specific market conditions that the model fails to capture.",
-    "smape": "The symmetric mean absolute percentage error (SMAPE) has a mean of 0.038, closely aligning with MAPE, which indicates consistent performance across predictions. However, the maximum value of 0.358 suggests that there are instances where the model's predictions diverge significantly from actual values.",
+    "mae": "The mean absolute error (MAE) is 2.18, indicating that on average, the model's predictions deviate from actual values by this amount. However, the maximum MAE of 58.658 suggests that there are outliers or specific instances where the model performs poorly.",
+    "mape": "The mean absolute percentage error (MAPE) is 0.039, which is relatively low, but the maximum value of 0.446 indicates that there are cases where the model's predictions are significantly off, potentially skewing the average.",
+    "smape": "The symmetric mean absolute percentage error (SMAPE) has a mean of 0.038, closely aligning with MAPE, which suggests consistent performance across predictions. However, the maximum value of 0.358 indicates that some predictions are highly inaccurate.",
     "mase": "Not available.",
-    "swase": "The mean SWASE is 0.041, indicating low bias in predictions, but the maximum of 0.479 suggests that there are periods of asymmetric errors, particularly in shock regimes.",
-    "directional_accuracy": "The directional accuracy is extremely low at a mean of 0.013, with a maximum of 1.0, indicating that while some predictions are correct, the vast majority are not. This poses a significant risk for deployment, as the model fails to predict the direction of price movements reliably."
+    "swase": "The mean SWASE is 0.041, indicating a slight bias in predictions, but the maximum value of 0.479 suggests that in certain instances, the model may be significantly underestimating or overestimating outcomes.",
+    "directional_accuracy": "The directional accuracy is extremely low, with a mean of 0.013, indicating that the model is correct in predicting the direction of price movement only 1.3% of the time on average. This is a critical issue that needs addressing."
   },
   "regime_insights": [
     {
       "regime": "peer_shock_flag=0",
-      "performance_comment": "In this regime, the model shows a delta MAE increase of 3.2621, indicating a deterioration in performance compared to other regimes.",
-      "risk_comment": "This regime is risky for deployment due to the increased MAE, suggesting that the model may not generalize well under these conditions."
+      "performance_comment": "In this regime, the model shows a delta MAE increase of 3.2621, indicating worsening performance compared to other regimes. The directional accuracy remains unchanged.",
+      "risk_comment": "This regime is risky for deployment due to the increasing MAE, suggesting that the model's predictions are becoming less reliable."
     }
   ],
   "symbol_outliers": [],
@@ -20,19 +20,19 @@
     "overall_top_features": [
       {
         "name": "peer_mean_ret_10d",
-        "importance_comment": "Despite having zero importance, it is noteworthy that this feature is included, indicating it may not contribute to the model's predictive power."
+        "importance_comment": "Despite having zero importance, it indicates that the model is not utilizing this feature effectively, which could be a missed opportunity for better predictions."
       },
       {
         "name": "sector_drawdown_60d",
-        "importance_comment": "Similar to the previous feature, its zero importance suggests it is not being utilized effectively in the model."
+        "importance_comment": "Similar to the previous feature, its zero importance suggests it is not contributing to the model's predictive capability."
       },
       {
         "name": "beta_vs_sector_60d",
-        "importance_comment": "The lack of importance indicates that this feature may not be relevant for the current model setup."
+        "importance_comment": "Again, with zero importance, this feature is not being leveraged, indicating potential model tuning opportunities."
       },
       {
         "name": "ret_20d_rank_in_sector",
-        "importance_comment": "Again, zero importance suggests that this feature does not aid in improving model predictions."
+        "importance_comment": "This feature also shows zero importance, suggesting a lack of relevance in the current model setup."
       }
     ],
     "shock_regime_top_features": []
@@ -40,13 +40,13 @@
   "recommendations": [
     {
       "category": "FEATURES",
-      "action": "Re-evaluate the feature set and consider adding more relevant predictors to improve model performance.",
-      "reason": "The current features show zero importance, indicating that the model may not be leveraging available data effectively."
+      "action": "Investigate and tune the feature set to include more relevant predictors, as current features show zero importance.",
+      "reason": "The lack of feature importance indicates that the model may not be capturing key drivers of the target variable, which could improve performance."
     },
     {
-      "category": "HPO",
-      "action": "Run hyperparameter optimization for the current model to explore potential improvements in predictive accuracy.",
-      "reason": "Given the low directional accuracy and the variability in MAE and RMSE, tuning the model could yield better performance."
+      "category": "RISK",
+      "action": "Reassess the deployment of the model given the low directional accuracy and increasing MAE in the peer shock regime.",
+      "reason": "The model's reliability is questionable, and deploying it in its current state could lead to significant forecasting errors."
     }
   ]
 }

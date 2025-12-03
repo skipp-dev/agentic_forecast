@@ -41,6 +41,12 @@ except Exception as e:
     GNNModel = None
     _HAS_HEAVY_DEPS = False
 
+# Ensure NLinear is defined even if imports fail or are skipped
+if 'NLinear' not in locals() and 'NLinear' not in globals():
+    NLinear = None
+if 'NeuralForecast' not in locals() and 'NeuralForecast' not in globals():
+    NeuralForecast = None
+
 logger = logging.getLogger(__name__)
 
 def _train_all_models(model_zoo: ModelZoo, data_spec: DataSpec, edge_index=None, node_features=None, symbol_to_idx=None, priority_order=None) -> dict[str, ModelTrainingResult]:
@@ -198,18 +204,29 @@ def forecasting_node(state: GraphState) -> GraphState:
             continue
         
         # Prepare df for NeuralForecast - handle both date column and datetime index
-        if 'date' in data.columns:
-            df = data[['date', 'close']].copy()
+        df = data.copy()
+        
+        # If 'y' already exists (from FeatureAgent), drop it to avoid conflict when renaming 'close'
+        if 'y' in df.columns:
+            df = df.drop(columns=['y'])
+            
+        if 'date' in df.columns:
+            # Keep all columns, rename date and close
             df = df.rename(columns={'date': 'ds', 'close': 'y'})
         else:
             # Use datetime index
-            df = data[['close']].copy()
             df['ds'] = df.index
             df = df.rename(columns={'close': 'y'})
         
         df['unique_id'] = symbol
         df['ds'] = pd.to_datetime(df['ds'])
-        df = df[['unique_id', 'ds', 'y']]
+        
+        # Identify exogenous columns (all columns except ds, y, unique_id)
+        exog_cols = [col for col in df.columns if col not in ['ds', 'y', 'unique_id']]
+        
+        # Ensure we keep all columns
+        cols_to_keep = ['unique_id', 'ds', 'y'] + exog_cols
+        df = df[cols_to_keep]
         
         train_df = df.iloc[:-horizon]
         val_df = df.iloc[-horizon:]
@@ -266,9 +283,10 @@ def forecasting_node(state: GraphState) -> GraphState:
                 symbol_scope=symbol,
                 train_df=train_df,
                 val_df=val_df,
-                feature_cols=['y'],
+                feature_cols=['y'] + exog_cols,
                 target_col='y',
-                horizon=horizon
+                horizon=horizon,
+                exog_cols=exog_cols
             )
             model_results = _train_all_models(model_zoo, data_spec, edge_index, node_features, symbol_to_idx, priority_order)
         
@@ -375,7 +393,7 @@ def forecasting_node(state: GraphState) -> GraphState:
                                 # Skip the rest of the NeuralForecast logic block
                                 # We need to structure this carefully to avoid executing the NF block
                             else:
-                                from neuralforecast.models import NLinear
+                                # NLinear is already imported globally
                                 input_size = 2 * horizon
                                 nf_inst = NeuralForecast(models=[NLinear(h=horizon, input_size=input_size, max_steps=50)], freq="D")
                                 # Prepare data for retraining
@@ -475,6 +493,8 @@ def forecasting_node(state: GraphState) -> GraphState:
                                         future_column = "DLinear"
                                     elif model_family == "TFT":
                                         future_column = "TFT"
+                                    elif model_family == "BaselineLinear":
+                                        future_column = "NLinear"
                                     else:
                                         future_column = model_family
                                     pred_future = preds_future[future_column].values
@@ -508,7 +528,7 @@ def forecasting_node(state: GraphState) -> GraphState:
                     X_future = np.arange(len(full_df), len(full_df) + horizon).reshape(-1, 1)
                     pred_future = model.predict(X_future)
                 else:
-                    from neuralforecast.models import NLinear
+                    # NLinear is already imported globally
                     input_size = 2 * horizon
                     model = NLinear(h=horizon, input_size=input_size, max_steps=50)
                     nf_inst = NeuralForecast(models=[model], freq="D")

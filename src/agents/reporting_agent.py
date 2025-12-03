@@ -266,6 +266,9 @@ class LLMReportingAgent:
         from src.configs.llm_prompts import build_reporting_agent_user_prompt
 
         # Build user prompt using the factory approach
+        from src.configs.llm_prompts import PROMPTS
+        system_prompt = PROMPTS.get("reporting_agent", "You are a helpful reporting assistant.")
+
         if self.factory:
             # Enhance the input with evaluation metrics
             enhanced_input = self._enhance_input_with_evaluation_metrics(report_input)
@@ -276,11 +279,9 @@ class LLMReportingAgent:
                 guardrail_status=enhanced_input.guardrail_status,
                 run_metadata=enhanced_input.run_metadata
             )
-            messages = self.factory.build_agent_messages('reporting_agent', user_prompt)
+            # messages = self.factory.build_agent_messages('reporting_agent', user_prompt) # Not used by complete()
         else:
             # Fallback to direct prompt building
-            from src.configs.llm_prompts import PROMPTS
-            system_prompt = PROMPTS["reporting_agent"]
             # Enhance the input with evaluation metrics
             enhanced_input = self._enhance_input_with_evaluation_metrics(report_input)
             user_prompt = build_reporting_agent_user_prompt(
@@ -299,7 +300,7 @@ class LLMReportingAgent:
         try:
             raw = self.llm.complete(
                 prompt=user_prompt,
-                system=system_prompt if 'system_prompt' not in locals() else system_prompt,
+                system=system_prompt,
                 temperature=0.2,
                 max_tokens=2000,
             )
@@ -315,6 +316,26 @@ class LLMReportingAgent:
         try:
             data = json.loads(raw)
             logger.info("Successfully parsed LLM response as JSON")
+            
+            # Filter out keys that are not in SystemReport fields
+            valid_keys = SystemReport.__annotations__.keys()
+            filtered_data = {k: v for k, v in data.items() if k in valid_keys}
+            
+            # Ensure all required keys are present
+            required_keys = set(valid_keys)
+            missing_keys = required_keys - set(filtered_data.keys())
+            if missing_keys:
+                logger.warning(f"LLM response missing keys: {missing_keys}. Filling with defaults.")
+                for key in missing_keys:
+                    if key == 'priority_actions':
+                        filtered_data[key] = []
+                    elif key == 'executive_summary':
+                        filtered_data[key] = "Executive summary missing."
+                    else:
+                        filtered_data[key] = {}
+            
+            data = filtered_data
+            
         except json.JSONDecodeError as e:
             logger.warning(f"LLM returned invalid JSON: {e}. Raw response: {raw}")
             # Fallback: wrap the raw text if model messed up
@@ -524,27 +545,38 @@ class LLMReportingAgent:
 
     def _record_llm_call_start(self):
         """Record Prometheus metrics for LLM call start."""
-        try:
-            from src.services.metrics_service import MetricsService
-            MetricsService.record_llm_call_start('reporting_agent')
-        except ImportError:
-            pass  # Metrics service not available
+        # Not supported by current MetricsService
+        pass
 
     def _record_llm_call_success(self):
         """Record Prometheus metrics for successful LLM call."""
-        try:
-            from src.services.metrics_service import MetricsService
-            MetricsService.record_llm_call_success('reporting_agent', tokens_input=0, tokens_output=0)
-        except ImportError:
-            pass
+        if self.metrics_service:
+            try:
+                self.metrics_service.record_llm_call(
+                    agent_name='reporting_agent',
+                    model='gpt-4o', # Assumption
+                    tokens_used=0, # Unknown
+                    cost=0.0,
+                    success=True,
+                    duration=0.0
+                )
+            except Exception:
+                pass
 
     def _record_llm_call_error(self):
         """Record Prometheus metrics for failed LLM call."""
-        try:
-            from src.services.metrics_service import MetricsService
-            MetricsService.record_llm_call_error('reporting_agent')
-        except ImportError:
-            pass
+        if self.metrics_service:
+            try:
+                self.metrics_service.record_llm_call(
+                    agent_name='reporting_agent',
+                    model='gpt-4o',
+                    tokens_used=0,
+                    cost=0.0,
+                    success=False,
+                    duration=0.0
+                )
+            except Exception:
+                pass
 
     def generate_markdown_report(self, report: SystemReport, timestamp: Optional[str] = None) -> str:
         """

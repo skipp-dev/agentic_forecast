@@ -158,11 +158,11 @@ def extract_guardrail_status(state: GraphState) -> Dict[str, Any]:
 
     status = {
         'total_checks': len(guardrail_log),
-        'passed_checks': sum(1 for log in guardrail_log if log.get('status') == 'passed'),
-        'failed_checks': sum(1 for log in guardrail_log if log.get('status') == 'failed'),
-        'warnings': sum(1 for log in guardrail_log if log.get('status') == 'warning'),
-        'critical_issues': [log for log in guardrail_log if log.get('severity') == 'critical'],
-        'can_proceed': all(log.get('status') != 'failed' for log in guardrail_log)
+        'passed_checks': sum(1 for log in guardrail_log if isinstance(log, dict) and log.get('status') == 'passed'),
+        'failed_checks': sum(1 for log in guardrail_log if isinstance(log, dict) and log.get('status') == 'failed'),
+        'warnings': sum(1 for log in guardrail_log if isinstance(log, dict) and log.get('status') == 'warning'),
+        'critical_issues': [log for log in guardrail_log if isinstance(log, dict) and log.get('severity') == 'critical'],
+        'can_proceed': all((log.get('status') != 'failed' if isinstance(log, dict) else True) for log in guardrail_log)
     }
 
     # Add risk KPI summary

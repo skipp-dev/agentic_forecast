@@ -1,0 +1,11 @@
+{
+  "report_id": "report_20251203_124824",
+  "timestamp": "20251203_124824",
+  "executive_summary": "The latest run of the forecasting platform processed three symbols but yielded no significant performance metrics, with an average performance of zero. Anomalies were detected, indicating potential issues that require further investigation. The HPO process has not yet been completed, and no optimizations were made. Despite passing all health checks, the lack of performance data suggests a need for immediate attention to the identified anomalies and a review of the models used.",
+  "performance_overview": {},
+  "risk_assessment": {},
+  "optimization_recommendations": {},
+  "research_insights": {},
+  "operational_notes": {},
+  "priority_actions": []
+}
