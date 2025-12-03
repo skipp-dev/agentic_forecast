@@ -79,8 +79,30 @@ class MacroDataAgent:
                 data = yf.download(ticker, start=start_date, end=end_date, progress=False)
 
                 if not data.empty:
-                    # Keep only Close price and rename
-                    data = data[['Close']].rename(columns={'Close': indicator})
+                    # Handle MultiIndex columns from yfinance (common in newer versions)
+                    if isinstance(data.columns, pd.MultiIndex):
+                        # Extract Close price level
+                        try:
+                            # If 'Close' is a level 0 column
+                            if 'Close' in data.columns.get_level_values(0):
+                                data = data.xs('Close', axis=1, level=0)
+                            # If 'Close' is not found (e.g. only one level), try standard access
+                            else:
+                                data = data[['Close']]
+                        except Exception:
+                            # Fallback
+                            data = data[['Close']]
+                    else:
+                        data = data[['Close']]
+                    
+                    # Rename the single column to the indicator name
+                    # Ensure we have a DataFrame with one column
+                    if isinstance(data, pd.Series):
+                        data = data.to_frame()
+                    
+                    # Force column name to be the indicator
+                    data.columns = [indicator]
+                    
                     macro_data[indicator] = data
                     logger.info(f"Collected {len(data)} records for {indicator}")
                 else:
@@ -168,7 +190,7 @@ class MacroDataAgent:
                 combined_data = combined_data.join(df, how='outer')
 
         # Forward fill missing values
-        combined_data = combined_data.fillna(method='ffill')
+        combined_data = combined_data.ffill()
 
         # Calculate additional features
         features_df = combined_data.copy()
