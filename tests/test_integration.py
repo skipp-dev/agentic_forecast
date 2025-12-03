@@ -67,10 +67,10 @@ sys.modules['talib'] = MockTalib()
 sys.path.append(os.path.dirname(__file__))
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 
-from agents.hyperparameter_search_agent import HyperparameterSearchAgent
-from agents.drift_monitor_agent import DriftMonitorAgent
-from agents.feature_engineer_agent import FeatureEngineerAgent
-from agents.forecast_agent import ForecastAgent
+from src.agents.hyperparameter_search_agent import HyperparameterSearchAgent
+from src.agents.drift_monitor_agent import DriftMonitorAgent
+from src.agents.feature_engineer_agent import FeatureEngineerAgent
+from src.agents.forecast_agent import ForecastAgent
 from services.gpu_training_service import GPUTrainingService, TrainingConfig
 from services.model_registry_service import ModelRegistryService
 from services.inference_service import InferenceService

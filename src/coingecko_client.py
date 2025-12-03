@@ -185,5 +185,4 @@ class CoinGeckoClient:
         df['timestamp'] = pd.to_datetime(df['timestamp'])
         df.set_index('timestamp', inplace=True)
 
-        return df</content>
-<parameter name="filePath">c:\Users\spreu\Documents\agentic_forecast\src\coingecko_client.py
+        return df

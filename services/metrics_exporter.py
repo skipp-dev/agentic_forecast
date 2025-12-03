@@ -27,6 +27,9 @@ EVALUATION_RESULTS_PATH = os.getenv(
 FORECAST_AGENT_OUTPUT_PATH = os.getenv(
     "FORECAST_AGENT_OUTPUT_PATH", "data/metrics/forecast_agent_output_latest.json"
 )
+TRUST_SCORES_PATH = os.getenv(
+    "TRUST_SCORES_PATH", "data/metrics/trust_scores.json"
+)
 
 
 def _load_json_safely(path: str) -> Dict[str, Any]:
@@ -438,6 +441,16 @@ def build_metrics_registry() -> CollectorRegistry:
             
     except Exception as e:
         print(f"Warning: Could not load forecast agent output metrics: {e}")
+        pass
+
+    # 7.5) Load and populate authoritative trust scores from Decision Agent
+    try:
+        trust_scores_data = _load_json_safely(TRUST_SCORES_PATH)
+        if trust_scores_data:
+            for symbol, score in trust_scores_data.items():
+                forecast_trust_score.labels(symbol=symbol).set(float(score))
+    except Exception as e:
+        print(f"Warning: Could not load authoritative trust scores: {e}")
         pass
     
     # 8) Add LLM usage metrics

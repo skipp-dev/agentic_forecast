@@ -23,7 +23,7 @@ from alpha_vantage_client import AlphaVantageClient, get_stock_data, get_technic
 # Import ML models
 sys.path.append(os.path.dirname(__file__))
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
-from models.lstm_forecaster import LSTMForecaster
+from src.models.lstm_forecaster import LSTMForecaster
 from src.ensemble_methods import EnsembleForecaster
 
 from src.drift_detection import DriftDetector

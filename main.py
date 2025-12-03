@@ -235,8 +235,8 @@ def main():
     app = create_main_graph(config)
     
     # Load symbols from IBKR watchlist CSV
-    # For BACKTEST, use config max_symbols setting
-    max_symbols = config.get('scaling', {}).get('max_symbols', None) if args.run_type == "BACKTEST" else (5 if args.run_type == "WEEKEND_HPO" else None)
+    # Use config max_symbols setting for all run types
+    max_symbols = config.get('scaling', {}).get('max_symbols', None)
     symbols = load_symbols_from_csv(max_symbols=max_symbols)
     if not symbols:
         print("Error: Could not load symbols from watchlist_ibkr.csv")

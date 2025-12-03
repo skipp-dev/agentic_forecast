@@ -1,0 +1,58 @@
+# Model Family Policy Configuration
+
+# Default policy for symbols not matching specific buckets
+default_policy:
+  short_horizon:  # 1-2 days
+    primary: ["AutoTFT"]
+    secondary: ["AutoNBEATS"]
+    baseline: ["AutoDLinear"]
+    ensemble_weights:
+      primary: 0.7
+      secondary: 0.3
+
+  medium_horizon: # 3-10 days
+    primary: ["AutoNHITS", "AutoNBEATS"]
+    secondary: ["AutoTFT", "graph_stgcnn"]
+    baseline: ["AutoDLinear"]
+    ensemble_weights:
+      primary: 0.6
+      secondary: 0.3
+      graph_stgcnn: 0.1
+
+  long_horizon:   # >10 days
+    primary: ["AutoNHITS"]
+    secondary: ["AutoNBEATS", "graph_stgcnn"]
+    baseline: ["AutoDLinear"]
+    ensemble_weights:
+      primary: 0.7
+      secondary: 0.2
+      graph_stgcnn: 0.1
+
+# Graph Model Settings
+graph_model_settings:
+  enabled: true
+  train_universe: "top_liquid"
+  min_history_days: 90
+  min_history_points: 250
+
+# Policy for specific buckets (e.g., by sector or data quality)
+buckets:
+  low_data:
+    description: "Symbols with limited historical data or high noise"
+    policy:
+      short_horizon:
+        primary: ["AutoDLinear"]
+        secondary: ["AutoNBEATS"]
+        baseline: ["BaselineLinear"]
+      medium_horizon:
+        primary: ["AutoDLinear"]
+        secondary: ["AutoNBEATS"]
+        baseline: ["BaselineLinear"]
+      long_horizon:
+        primary: ["AutoDLinear"]
+        secondary: ["BaselineLinear"]
+        baseline: ["BaselineLinear"]
+
+# Global settings
+enable_ensembling: true
+risk_baseline_family: "BaselineLinear"

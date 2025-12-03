@@ -3,11 +3,12 @@
 import sys
 import os
 import pandas as pd
-sys.path.append(os.path.dirname(os.path.dirname(__file__)))
+import asyncio
+sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 
 from src.data.unified_ingestion_v2 import UnifiedDataIngestion
 
-def test_data_ingestion():
+async def test_data_ingestion():
     """Test data ingestion with a small subset of symbols."""
 
     print("🧪 Testing Data Ingestion with Limited Symbols")
@@ -18,14 +19,12 @@ def test_data_ingestion():
 
     # Initialize data ingestion
     data_ingestion = UnifiedDataIngestion(
-        use_real_data=True,
-        market_data_type=3,  # Delayed data
-        config={}
+        use_real_data=True
     )
 
     try:
         print("Initializing data ingestion...")
-        data_ingestion.initialize()
+        await data_ingestion.initialize()
         print(f"✅ Primary source: {data_ingestion.primary_source.upper()}")
 
         # Define time window
@@ -40,7 +39,7 @@ def test_data_ingestion():
         for symbol in test_symbols:
             print(f"\n🔍 Fetching data for {symbol}...")
             try:
-                df = data_ingestion.get_historical_data(
+                df = await data_ingestion.get_historical_data(
                     symbol=symbol,
                     start_date=start_date,
                     end_date=end_date,
@@ -90,7 +89,7 @@ def test_data_ingestion():
 
     finally:
         print("\n🔌 Cleaning up connections...")
-        data_ingestion.disconnect()
+        await data_ingestion.disconnect()
 
 if __name__ == "__main__":
-    test_data_ingestion()
+    asyncio.run(test_data_ingestion())

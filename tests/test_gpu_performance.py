@@ -62,16 +62,16 @@ class MockTalib:
         l = len(args[0])
         return np.random.random(l)
 
-sys.modules['talib'] = MockTalib()
+sys.modules["talib"] = MockTalib()
 
 # Add paths
 sys.path.append(os.path.dirname(__file__))
-sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
+sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
 
 from src.gpu_services import get_gpu_services
-from services.gpu_training_service import GPUTrainingService
+from services.gpu_training_service import GPUTrainingService, TrainingConfig
 from services.inference_service import InferenceService
-from agents.feature_engineer_agent import FeatureEngineerAgent
+from src.agents.feature_engineer_agent import FeatureEngineerAgent
 from data.metrics_database import MetricsDatabase
 
 logger = logging.getLogger(__name__)
@@ -102,7 +102,7 @@ class TestGPUPerformanceTuning(unittest.TestCase):
 
     def _create_test_data(self) -> pd.DataFrame:
         """Create test data for GPU performance testing."""
-        dates = pd.date_range(start='2023-01-01', end='2023-03-31', freq='D')
+        dates = pd.date_range(start="2023-01-01", end="2023-03-31", freq="D")
         np.random.seed(42)
 
         # Generate price data
@@ -112,11 +112,11 @@ class TestGPUPerformanceTuning(unittest.TestCase):
 
         # Create OHLCV data
         data = pd.DataFrame({
-            'open': prices * (1 + np.random.normal(0, 0.005, n_days)),
-            'high': prices * (1 + np.abs(np.random.normal(0, 0.02, n_days))),
-            'low': prices * (1 - np.abs(np.random.normal(0, 0.02, n_days))),
-            'close': prices,
-            'volume': np.random.randint(1000000, 10000000, n_days)
+            "open": prices * (1 + np.random.normal(0, 0.005, n_days)),
+            "high": prices * (1 + np.abs(np.random.normal(0, 0.02, n_days))),
+            "low": prices * (1 - np.abs(np.random.normal(0, 0.02, n_days))),
+            "close": prices,
+            "volume": np.random.randint(1000000, 10000000, n_days)
         }, index=dates)
 
         return data
@@ -130,7 +130,7 @@ class TestGPUPerformanceTuning(unittest.TestCase):
 
         try:
             # Test feature engineering with GPU
-            symbol = 'AAPL'
+            symbol = "AAPL"
             features = self.feature_engineer.engineer_features(symbol, self.test_data)
 
             # Check memory usage during feature engineering
@@ -140,9 +140,9 @@ class TestGPUPerformanceTuning(unittest.TestCase):
             # Test GPU training
             training_data = self._prepare_training_data(features)
             if training_data:
-                model_config = {'type': 'lstm', 'hidden_size': 64, 'num_layers': 2}
-                config = self.training_service.TrainingConfig(
-                    model_type='lstm', epochs=5, batch_size=32
+                model_config = {"type": "lstm", "hidden_size": 64, "num_layers": 2}
+                config = TrainingConfig(
+                    model_type="lstm", epochs=5, batch_size=32
                 )
 
                 training_start_memory = torch.cuda.memory_allocated()
@@ -154,10 +154,10 @@ class TestGPUPerformanceTuning(unittest.TestCase):
                 memory_used_training = training_end_memory - training_start_memory
 
                 # Store memory metrics
-                self.metrics_db.store_metric('gpu.memory.feature_engineering', memory_used_features / 1024**3,
-                                           {'test': 'memory_management', 'component': 'feature_engineering'})
-                self.metrics_db.store_metric('gpu.memory.training', memory_used_training / 1024**3,
-                                           {'test': 'memory_management', 'component': 'training'})
+                self.metrics_db.store_metric("gpu.memory.feature_engineering", memory_used_features / 1024**3,
+                                           {"test": "memory_management", "component": "feature_engineering"})
+                self.metrics_db.store_metric("gpu.memory.training", memory_used_training / 1024**3,
+                                           {"test": "memory_management", "component": "training"})
 
                 # Assertions
                 self.assertLess(memory_used_features, 2.0)  # Less than 2GB for features
@@ -184,23 +184,23 @@ class TestGPUPerformanceTuning(unittest.TestCase):
             utilizations = []
 
             # Start monitoring
-            symbol = 'AAPL'
+            symbol = "AAPL"
             features = self.feature_engineer.engineer_features(symbol, self.test_data)
 
             monitoring_time = time.time() - start_time
             avg_utilization = np.mean(utilizations) if utilizations else 0
 
-            utilization_patterns['feature_engineering'] = {
-                'avg_utilization': avg_utilization,
-                'duration': monitoring_time
+            utilization_patterns["feature_engineering"] = {
+                "avg_utilization": avg_utilization,
+                "duration": monitoring_time
             }
 
             # Test training utilization
             training_data = self._prepare_training_data(features)
             if training_data:
-                model_config = {'type': 'lstm', 'hidden_size': 32, 'num_layers': 1}
-                config = self.training_service.TrainingConfig(
-                    model_type='lstm', epochs=3, batch_size=16
+                model_config = {"type": "lstm", "hidden_size": 32, "num_layers": 1}
+                config = TrainingConfig(
+                    model_type="lstm", epochs=3, batch_size=16
                 )
 
                 start_time = time.time()
@@ -213,17 +213,17 @@ class TestGPUPerformanceTuning(unittest.TestCase):
                 monitoring_time = time.time() - start_time
                 avg_utilization = np.mean(utilizations) if utilizations else 0
 
-                utilization_patterns['training'] = {
-                    'avg_utilization': avg_utilization,
-                    'duration': monitoring_time
+                utilization_patterns["training"] = {
+                    "avg_utilization": avg_utilization,
+                    "duration": monitoring_time
                 }
 
             # Store utilization metrics
             for component, metrics in utilization_patterns.items():
-                self.metrics_db.store_metric('gpu.utilization.avg', metrics['avg_utilization'],
-                                           {'test': 'utilization', 'component': component})
-                self.metrics_db.store_metric('gpu.utilization.duration', metrics['duration'],
-                                           {'test': 'utilization', 'component': component})
+                self.metrics_db.store_metric("gpu.utilization.avg", metrics["avg_utilization"],
+                                           {"test": "utilization", "component": component})
+                self.metrics_db.store_metric("gpu.utilization.duration", metrics["duration"],
+                                           {"test": "utilization", "component": component})
 
             logger.info(f"GPU utilization patterns: {utilization_patterns}")
 
@@ -239,15 +239,15 @@ class TestGPUPerformanceTuning(unittest.TestCase):
         throughput_results = {}
 
         try:
-            symbol = 'AAPL'
+            symbol = "AAPL"
             features = self.feature_engineer.engineer_features(symbol, self.test_data)
             training_data = self._prepare_training_data(features)
 
             if training_data:
                 for batch_size in batch_sizes:
-                    model_config = {'type': 'lstm', 'hidden_size': 32, 'num_layers': 1}
-                    config = self.training_service.TrainingConfig(
-                        model_type='lstm', epochs=2, batch_size=batch_size
+                    model_config = {"type": "lstm", "hidden_size": 32, "num_layers": 1}
+                    config = TrainingConfig(
+                        model_type="lstm", epochs=2, batch_size=batch_size
                     )
 
                     start_time = time.time()
@@ -264,27 +264,27 @@ class TestGPUPerformanceTuning(unittest.TestCase):
                     memory_used = final_memory - initial_memory
 
                     # Calculate throughput (samples per second)
-                    n_samples = len(training_data['X_train'])
+                    n_samples = len(training_data["X_train"])
                     throughput = n_samples / processing_time
 
                     throughput_results[batch_size] = {
-                        'throughput': throughput,
-                        'processing_time': processing_time,
-                        'memory_used_gb': memory_used / 1024**3
+                        "throughput": throughput,
+                        "processing_time": processing_time,
+                        "memory_used_gb": memory_used / 1024**3
                     }
 
                     # Store metrics
-                    self.metrics_db.store_metric('gpu.throughput.samples_per_sec', throughput,
-                                               {'test': 'batch_processing', 'batch_size': batch_size})
-                    self.metrics_db.store_metric('gpu.batch_processing.time', processing_time,
-                                               {'test': 'batch_processing', 'batch_size': batch_size})
+                    self.metrics_db.store_metric("gpu.throughput.samples_per_sec", throughput,
+                                               {"test": "batch_processing", "batch_size": batch_size})
+                    self.metrics_db.store_metric("gpu.batch_processing.time", processing_time,
+                                               {"test": "batch_processing", "batch_size": batch_size})
 
                 # Find optimal batch size
                 optimal_batch_size = max(throughput_results.keys(),
-                                       key=lambda x: throughput_results[x]['throughput'])
+                                       key=lambda x: throughput_results[x]["throughput"])
 
-                self.metrics_db.store_metric('gpu.optimal_batch_size', optimal_batch_size,
-                                           {'test': 'batch_processing'})
+                self.metrics_db.store_metric("gpu.optimal_batch_size", optimal_batch_size,
+                                           {"test": "batch_processing"})
 
                 logger.info(f"Batch processing results: {throughput_results}")
                 logger.info(f"Optimal batch size: {optimal_batch_size}")
@@ -299,7 +299,7 @@ class TestGPUPerformanceTuning(unittest.TestCase):
 
         try:
             # Test with different memory optimization strategies
-            symbol = 'AAPL'
+            symbol = "AAPL"
             features = self.feature_engineer.engineer_features(symbol, self.test_data)
 
             # Strategy 1: Standard processing
@@ -308,9 +308,9 @@ class TestGPUPerformanceTuning(unittest.TestCase):
 
             training_data = self._prepare_training_data(features)
             if training_data:
-                model_config = {'type': 'lstm', 'hidden_size': 64, 'num_layers': 2}
-                config = self.training_service.TrainingConfig(
-                    model_type='lstm', epochs=3, batch_size=32
+                model_config = {"type": "lstm", "hidden_size": 64, "num_layers": 2}
+                config = TrainingConfig(
+                    model_type="lstm", epochs=3, batch_size=32
                 )
 
                 results = self.training_service.train_model(
@@ -337,12 +337,12 @@ class TestGPUPerformanceTuning(unittest.TestCase):
                 memory_efficiency = (memory_savings / standard_memory) * 100 if standard_memory > 0 else 0
 
                 # Store optimization metrics
-                self.metrics_db.store_metric('gpu.memory.standard', standard_memory / 1024**3,
-                                           {'test': 'memory_optimization', 'strategy': 'standard'})
-                self.metrics_db.store_metric('gpu.memory.checkpoint', checkpoint_memory / 1024**3,
-                                           {'test': 'memory_optimization', 'strategy': 'checkpoint'})
-                self.metrics_db.store_metric('gpu.memory.savings_percent', memory_efficiency,
-                                           {'test': 'memory_optimization'})
+                self.metrics_db.store_metric("gpu.memory.standard", standard_memory / 1024**3,
+                                           {"test": "memory_optimization", "strategy": "standard"})
+                self.metrics_db.store_metric("gpu.memory.checkpoint", checkpoint_memory / 1024**3,
+                                           {"test": "memory_optimization", "strategy": "checkpoint"})
+                self.metrics_db.store_metric("gpu.memory.savings_percent", memory_efficiency,
+                                           {"test": "memory_optimization"})
 
                 logger.info(f"Memory optimization: Standard={standard_memory/1024**3:.2f}GB, "
                            f"Checkpoint={checkpoint_memory/1024**3:.2f}GB, "
@@ -362,14 +362,14 @@ class TestGPUPerformanceTuning(unittest.TestCase):
             from services.inference_service import InferenceRequest
 
             # First train a model
-            symbol = 'AAPL'
+            symbol = "AAPL"
             features = self.feature_engineer.engineer_features(symbol, self.test_data)
             training_data = self._prepare_training_data(features)
 
             if training_data:
-                model_config = {'type': 'lstm', 'hidden_size': 32, 'num_layers': 1}
-                config = self.training_service.TrainingConfig(
-                    model_type='lstm', epochs=2, batch_size=16
+                model_config = {"type": "lstm", "hidden_size": 32, "num_layers": 1}
+                config = TrainingConfig(
+                    model_type="lstm", epochs=2, batch_size=16
                 )
 
                 training_results = self.training_service.train_model(
@@ -400,12 +400,12 @@ class TestGPUPerformanceTuning(unittest.TestCase):
                 throughput = 1.0 / avg_latency
 
                 # Store inference metrics
-                self.metrics_db.store_metric('gpu.inference.latency.avg', avg_latency * 1000,
-                                           {'test': 'inference_performance', 'metric': 'latency_ms'})
-                self.metrics_db.store_metric('gpu.inference.latency.p95', p95_latency * 1000,
-                                           {'test': 'inference_performance', 'metric': 'p95_latency_ms'})
-                self.metrics_db.store_metric('gpu.inference.throughput', throughput,
-                                           {'test': 'inference_performance', 'metric': 'requests_per_sec'})
+                self.metrics_db.store_metric("gpu.inference.latency.avg", avg_latency * 1000,
+                                           {"test": "inference_performance", "metric": "latency_ms"})
+                self.metrics_db.store_metric("gpu.inference.latency.p95", p95_latency * 1000,
+                                           {"test": "inference_performance", "metric": "p95_latency_ms"})
+                self.metrics_db.store_metric("gpu.inference.throughput", throughput,
+                                           {"test": "inference_performance", "metric": "requests_per_sec"})
 
                 # Performance assertions
                 self.assertLess(avg_latency, 1.0)  # Should be under 1 second
@@ -427,7 +427,7 @@ class TestGPUPerformanceTuning(unittest.TestCase):
             import queue
 
             # Test concurrent feature engineering
-            symbol = 'AAPL'
+            symbol = "AAPL"
             n_threads = min(4, torch.cuda.device_count() if torch.cuda.is_available() else 1)
 
             results_queue = queue.Queue()
@@ -440,15 +440,15 @@ class TestGPUPerformanceTuning(unittest.TestCase):
                     end_time = time.time()
 
                     results_queue.put({
-                        'thread_id': thread_id,
-                        'duration': end_time - start_time,
-                        'success': True
+                        "thread_id": thread_id,
+                        "duration": end_time - start_time,
+                        "success": True
                     })
                 except Exception as e:
                     results_queue.put({
-                        'thread_id': thread_id,
-                        'error': str(e),
-                        'success': False
+                        "thread_id": thread_id,
+                        "error": str(e),
+                        "success": False
                     })
 
             # Start concurrent operations
@@ -466,14 +466,14 @@ class TestGPUPerformanceTuning(unittest.TestCase):
             while not results_queue.empty():
                 concurrent_results.append(results_queue.get())
 
-            successful_operations = sum(1 for r in concurrent_results if r['success'])
-            avg_duration = np.mean([r['duration'] for r in concurrent_results if r['success']])
+            successful_operations = sum(1 for r in concurrent_results if r["success"])
+            avg_duration = np.mean([r["duration"] for r in concurrent_results if r["success"]])
 
             # Store concurrency metrics
-            self.metrics_db.store_metric('gpu.concurrency.successful_ops', successful_operations,
-                                       {'test': 'concurrent_operations'})
-            self.metrics_db.store_metric('gpu.concurrency.avg_duration', avg_duration,
-                                       {'test': 'concurrent_operations'})
+            self.metrics_db.store_metric("gpu.concurrency.successful_ops", successful_operations,
+                                       {"test": "concurrent_operations"})
+            self.metrics_db.store_metric("gpu.concurrency.avg_duration", avg_duration,
+                                       {"test": "concurrent_operations"})
 
             # Assertions
             self.assertEqual(successful_operations, n_threads)  # All should succeed
@@ -520,10 +520,10 @@ class TestGPUPerformanceTuning(unittest.TestCase):
             fragmentation_score_2 = self._calculate_fragmentation_score()
 
             # Store fragmentation metrics
-            self.metrics_db.store_metric('gpu.fragmentation.sequential', fragmentation_score_1,
-                                       {'test': 'memory_fragmentation', 'pattern': 'sequential'})
-            self.metrics_db.store_metric('gpu.fragmentation.random', fragmentation_score_2,
-                                       {'test': 'memory_fragmentation', 'pattern': 'random'})
+            self.metrics_db.store_metric("gpu.fragmentation.sequential", fragmentation_score_1,
+                                       {"test": "memory_fragmentation", "pattern": "sequential"})
+            self.metrics_db.store_metric("gpu.fragmentation.random", fragmentation_score_2,
+                                       {"test": "memory_fragmentation", "pattern": "random"})
 
             logger.info(f"Memory fragmentation: Sequential={fragmentation_score_1:.3f}, "
                        f"Random={fragmentation_score_2:.3f}")
@@ -541,7 +541,7 @@ class TestGPUPerformanceTuning(unittest.TestCase):
             max_contiguous = 0
             for size in range(test_size, 1024*1024, -1024*1024):  # Decreasing sizes
                 try:
-                    test_tensor = torch.empty(size, dtype=torch.uint8, device='cuda')
+                    test_tensor = torch.empty(size, dtype=torch.uint8, device="cuda")
                     max_contiguous = size
                     del test_tensor
                     torch.cuda.empty_cache()
@@ -559,8 +559,8 @@ class TestGPUPerformanceTuning(unittest.TestCase):
     def _prepare_training_data(self, features: pd.DataFrame) -> Optional[Dict[str, Any]]:
         """Prepare training data from features."""
         try:
-            target = features['close'].shift(-1).dropna()
-            feature_cols = [col for col in features.columns if col != 'close']
+            target = features["close"].shift(-1).dropna()
+            feature_cols = [col for col in features.columns if col != "close"]
             feature_data = features[feature_cols].dropna()
 
             common_index = feature_data.index.intersection(target.index)
@@ -574,11 +574,11 @@ class TestGPUPerformanceTuning(unittest.TestCase):
             X_train, X_val, y_train, y_val = train_test_split(X, y, test_size=0.2, shuffle=False)
 
             return {
-                'X_train': X_train,
-                'X_val': X_val,
-                'y_train': y_train,
-                'y_val': y_val,
-                'feature_names': feature_cols
+                "X_train": X_train,
+                "X_val": X_val,
+                "y_train": y_train,
+                "y_val": y_val,
+                "feature_names": feature_cols
             }
 
         except Exception as e:
@@ -608,9 +608,9 @@ class TestGPUPerformanceTuning(unittest.TestCase):
         from data.metrics_database import MetricQuery
 
         query = MetricQuery(
-            metric_names=['gpu.memory.feature_engineering', 'gpu.memory.training',
-                         'gpu.utilization.avg', 'gpu.throughput.samples_per_sec',
-                         'gpu.inference.latency.avg', 'gpu.memory.savings_percent'],
+            metric_names=["gpu.memory.feature_engineering", "gpu.memory.training",
+                         "gpu.utilization.avg", "gpu.throughput.samples_per_sec",
+                         "gpu.inference.latency.avg", "gpu.memory.savings_percent"],
             start_time=datetime.now() - timedelta(hours=1),
             end_time=datetime.now()
         )
@@ -619,10 +619,10 @@ class TestGPUPerformanceTuning(unittest.TestCase):
 
         if not metrics.empty:
             summary = {
-                'total_metrics_collected': len(metrics),
-                'memory_efficiency': metrics[metrics['metric_name'] == 'gpu.memory.savings_percent']['value'].mean(),
-                'avg_inference_latency': metrics[metrics['metric_name'] == 'gpu.inference.latency.avg']['value'].mean(),
-                'peak_throughput': metrics[metrics['metric_name'] == 'gpu.throughput.samples_per_sec']['value'].max()
+                "total_metrics_collected": len(metrics),
+                "memory_efficiency": metrics[metrics["metric_name"] == "gpu.memory.savings_percent"]["value"].mean(),
+                "avg_inference_latency": metrics[metrics["metric_name"] == "gpu.inference.latency.avg"]["value"].mean(),
+                "peak_throughput": metrics[metrics["metric_name"] == "gpu.throughput.samples_per_sec"]["value"].max()
             }
 
             logger.info(f"GPU Performance Summary: {summary}")
@@ -630,8 +630,8 @@ class TestGPUPerformanceTuning(unittest.TestCase):
             # Store summary metrics
             for key, value in summary.items():
                 if not np.isnan(value):
-                    self.metrics_db.store_metric(f'gpu.summary.{key}', value,
-                                               {'test': 'performance_summary'})
+                    self.metrics_db.store_metric(f"gpu.summary.{key}", value,
+                                               {"test": "performance_summary"})
 
 
 if not torch.cuda.is_available():
@@ -645,9 +645,10 @@ if not torch.cuda.is_available():
         """Placeholder so pytest logs a single skip instead of many."""
         pass
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     # Set up logging
-    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
     # Run GPU performance tests
     unittest.main(verbosity=2)
+

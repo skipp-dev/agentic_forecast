@@ -38,7 +38,7 @@ class FMPClient:
         if not self.api_key:
             raise ValueError("FMP API key required. Set FMP_API_KEY env var or pass api_key parameter.")
 
-        self.base_url = "https://financialmodelingprep.com/api/v3"
+        self.base_url = "https://financialmodelingprep.com/stable"
         self.session = requests.Session()
 
         # Rate limiting (FMP free tier: 250 requests/day, premium: higher)
@@ -98,8 +98,8 @@ class FMPClient:
         Returns:
             DataFrame with income statement data
         """
-        endpoint = f"income-statement/{symbol}"
-        params = {'period': period, 'limit': limit}
+        endpoint = "income-statement"
+        params = {'symbol': symbol, 'period': period, 'limit': limit}
 
         data = self._make_request(endpoint, params)
         if data:
@@ -123,8 +123,8 @@ class FMPClient:
         Returns:
             DataFrame with balance sheet data
         """
-        endpoint = f"balance-sheet-statement/{symbol}"
-        params = {'period': period, 'limit': limit}
+        endpoint = "balance-sheet-statement"
+        params = {'symbol': symbol, 'period': period, 'limit': limit}
 
         data = self._make_request(endpoint, params)
         if data:
@@ -148,8 +148,8 @@ class FMPClient:
         Returns:
             DataFrame with cash flow data
         """
-        endpoint = f"cash-flow-statement/{symbol}"
-        params = {'period': period, 'limit': limit}
+        endpoint = "cash-flow-statement"
+        params = {'symbol': symbol, 'period': period, 'limit': limit}
 
         data = self._make_request(endpoint, params)
         if data:
@@ -173,8 +173,8 @@ class FMPClient:
         Returns:
             DataFrame with financial ratios
         """
-        endpoint = f"ratios/{symbol}"
-        params = {'period': period, 'limit': limit}
+        endpoint = "ratios"
+        params = {'symbol': symbol, 'period': period, 'limit': limit}
 
         data = self._make_request(endpoint, params)
         if data:
@@ -196,8 +196,9 @@ class FMPClient:
         Returns:
             Dictionary with company profile data
         """
-        endpoint = f"profile/{symbol}"
-        return self._make_request(endpoint)
+        endpoint = "profile"
+        params = {'symbol': symbol}
+        return self._make_request(endpoint, params)
 
     def get_earnings_calendar(self, symbol: Optional[str] = None, from_date: Optional[str] = None,
                             to_date: Optional[str] = None) -> Optional[pd.DataFrame]:
@@ -228,5 +229,4 @@ class FMPClient:
                 df['date'] = pd.to_datetime(df['date'])
                 df.set_index('date', inplace=True)
             return df
-        return None</content>
-<parameter name="filePath">c:\Users\spreu\Documents\agentic_forecast\src\fmp_client.py
+        return None

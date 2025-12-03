@@ -236,5 +236,4 @@ class FXDataAgent:
 
         regimes['fx_regime'] = np.select(conditions, choices, default=default)
 
-        return regimes</content>
-<parameter name="filePath">c:\Users\spreu\Documents\agentic_forecast\agents\fx_data_agent.py
+        return regimes

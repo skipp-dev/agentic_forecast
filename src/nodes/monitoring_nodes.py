@@ -15,15 +15,17 @@ def drift_detection_node(state: GraphState) -> GraphState:
     if not drift_metrics.empty:
         drift_metrics.index = drift_metrics.index.astype(str)
         state['drift_metrics'] = drift_metrics.to_dict('index')
+        
+        if 'drift_detected' in drift_metrics.columns and drift_metrics['drift_detected'].any():
+            state['drift_detected'] = True
+            print("[ALERT] Drift detected!")
+        else:
+            state['drift_detected'] = False
+            print("[OK] No significant drift detected.")
     else:
         state['drift_metrics'] = {}
-    
-    if drift_metrics['drift_detected'].any():
-        state['drift_detected'] = True
-        print("[ALERT] Drift detected!")
-    else:
         state['drift_detected'] = False
-        print("[OK] No significant drift detected.")
+        print("[OK] No data for drift detection.")
         
     print(f"[OK] Drift detection complete.")
     return state

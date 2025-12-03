@@ -264,5 +264,4 @@ class RegimeDetectionAgent:
             'performance_analysis': performance_analysis,
             'detection_timestamp': datetime.now(),
             'regime_types': list(regimes.keys())
-        }</content>
-<parameter name="filePath">c:\Users\spreu\Documents\agentic_forecast\agents\regime_detection_agent.py
+        }

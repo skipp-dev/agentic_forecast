@@ -60,15 +60,15 @@ class MockTalib:
         l = len(args[0])
         return np.random.random(l)
 
-sys.modules['talib'] = MockTalib()
+sys.modules["talib"] = MockTalib()
 
 # Add paths
 sys.path.append(os.path.dirname(__file__))
-sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
+sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
 
 from data.feature_store import TimeSeriesFeatureStore, FeatureQuery
 from data.metrics_database import MetricsDatabase, MetricQuery
-from agents.feature_engineer_agent import FeatureEngineerAgent
+from src.agents.feature_engineer_agent import FeatureEngineerAgent
 
 logger = logging.getLogger(__name__)
 
@@ -78,8 +78,8 @@ class TestDataPipelineValidation(unittest.TestCase):
     def setUp(self):
         """Set up test environment."""
         self.temp_dir = tempfile.mkdtemp()
-        self.feature_store_path = os.path.join(self.temp_dir, 'feature_store')
-        self.metrics_db_path = os.path.join(self.temp_dir, 'metrics.db')
+        self.feature_store_path = os.path.join(self.temp_dir, "feature_store")
+        self.metrics_db_path = os.path.join(self.temp_dir, "metrics.db")
 
         self.feature_store = TimeSeriesFeatureStore(self.feature_store_path)
         self.metrics_db = MetricsDatabase(self.metrics_db_path)
@@ -94,10 +94,10 @@ class TestDataPipelineValidation(unittest.TestCase):
 
     def _create_test_data(self) -> Dict[str, pd.DataFrame]:
         """Create comprehensive test data."""
-        dates = pd.date_range(start='2023-01-01', end='2023-12-31', freq='D')
+        dates = pd.date_range(start="2023-01-01", end="2023-12-31", freq="D")
         np.random.seed(42)
 
-        symbols = ['AAPL', 'GOOGL', 'MSFT', 'TSLA']
+        symbols = ["AAPL", "GOOGL", "MSFT", "TSLA"]
 
         data = {}
         for symbol in symbols:
@@ -112,16 +112,16 @@ class TestDataPipelineValidation(unittest.TestCase):
             volume = np.random.randint(1000000, 50000000, n_days)
 
             df = pd.DataFrame({
-                'open': prices * (1 + np.random.normal(0, 0.005, n_days)),
-                'high': prices * high_mult,
-                'low': prices * low_mult,
-                'close': prices,
-                'volume': volume
+                "open": prices * (1 + np.random.normal(0, 0.005, n_days)),
+                "high": prices * high_mult,
+                "low": prices * low_mult,
+                "close": prices,
+                "volume": volume
             }, index=dates)
 
             # Ensure OHLC integrity
-            df['high'] = np.maximum(df[['close', 'open']].max(axis=1), df['high'])
-            df['low'] = np.minimum(df[['close', 'open']].min(axis=1), df['low'])
+            df["high"] = np.maximum(df[["close", "open"]].max(axis=1), df["high"])
+            df["low"] = np.minimum(df[["close", "open"]].min(axis=1), df["low"])
 
             data[symbol] = df
 
@@ -129,7 +129,7 @@ class TestDataPipelineValidation(unittest.TestCase):
 
     def test_feature_store_data_integrity(self):
         """Test data integrity in feature store operations."""
-        symbol = 'AAPL'
+        symbol = "AAPL"
         data = self.test_data[symbol]
 
         # Store original data
@@ -165,7 +165,7 @@ class TestDataPipelineValidation(unittest.TestCase):
 
     def test_feature_store_partitioning(self):
         """Test time-based partitioning functionality."""
-        symbol = 'AAPL'
+        symbol = "AAPL"
         data = self.test_data[symbol]
 
         # Store data
@@ -177,7 +177,7 @@ class TestDataPipelineValidation(unittest.TestCase):
         # First half
         query1 = FeatureQuery(
             symbol=symbol,
-            feature_names=['close'],
+            feature_names=["close"],
             start_date=data.index[0],
             end_date=mid_date
         )
@@ -186,7 +186,7 @@ class TestDataPipelineValidation(unittest.TestCase):
         # Second half
         query2 = FeatureQuery(
             symbol=symbol,
-            feature_names=['close'],
+            feature_names=["close"],
             start_date=mid_date + timedelta(days=1),
             end_date=data.index[-1]
         )
@@ -198,7 +198,7 @@ class TestDataPipelineValidation(unittest.TestCase):
 
     def test_feature_store_updates(self):
         """Test feature store update functionality."""
-        symbol = 'AAPL'
+        symbol = "AAPL"
         initial_data = self.test_data[symbol].iloc[:100]  # First 100 days
 
         # Store initial data
@@ -211,7 +211,7 @@ class TestDataPipelineValidation(unittest.TestCase):
         # Verify update
         query = FeatureQuery(
             symbol=symbol,
-            feature_names=['close'],
+            feature_names=["close"],
             start_date=initial_data.index[0],
             end_date=additional_data.index[-1]
         )
@@ -223,8 +223,8 @@ class TestDataPipelineValidation(unittest.TestCase):
 
     def test_metrics_database_time_series(self):
         """Test metrics database time-series functionality."""
-        metric_name = 'test_performance'
-        symbol = 'AAPL'
+        metric_name = "test_performance"
+        symbol = "AAPL"
 
         # Store time-series metrics
         base_time = datetime.now()
@@ -233,7 +233,7 @@ class TestDataPipelineValidation(unittest.TestCase):
             value = 0.5 + 0.1 * np.sin(i * 0.1) + np.random.normal(0, 0.05)
             self.metrics_db.store_metric(
                 metric_name, value,
-                {'symbol': symbol, 'type': 'performance'},
+                {"symbol": symbol, "type": "performance"},
                 timestamp=timestamp
             )
 
@@ -251,12 +251,12 @@ class TestDataPipelineValidation(unittest.TestCase):
         self.assertTrue(len(results) >= 90)  # Allow some tolerance
 
         # Check temporal ordering
-        self.assertTrue(results['timestamp'].is_monotonic_increasing)
+        self.assertTrue(results["timestamp"].is_monotonic_increasing)
 
     def test_metrics_database_aggregation(self):
         """Test metrics database aggregation functionality."""
-        metric_name = 'test_aggregated'
-        symbol = 'AAPL'
+        metric_name = "test_aggregated"
+        symbol = "AAPL"
 
         # Store hourly metrics for a day
         base_time = datetime(2023, 1, 1, 0, 0, 0)
@@ -266,7 +266,7 @@ class TestDataPipelineValidation(unittest.TestCase):
                 value = 10 + hour + np.random.normal(0, 1)
                 self.metrics_db.store_metric(
                     metric_name, value,
-                    {'symbol': symbol, 'type': 'aggregated_test'},
+                    {"symbol": symbol, "type": "aggregated_test"},
                     timestamp=timestamp
                 )
 
@@ -275,8 +275,8 @@ class TestDataPipelineValidation(unittest.TestCase):
             metric_names=[metric_name],
             start_time=base_time,
             end_time=base_time + timedelta(days=1),
-            aggregation='mean',
-            interval='1h'
+            aggregation="mean",
+            interval="1h"
         )
         hourly_means = self.metrics_db.query_metrics(query)
 
@@ -286,7 +286,7 @@ class TestDataPipelineValidation(unittest.TestCase):
 
     def test_data_pipeline_end_to_end(self):
         """Test complete data pipeline from feature engineering to storage."""
-        symbol = 'AAPL'
+        symbol = "AAPL"
         raw_data = self.test_data[symbol]
 
         # Step 1: Feature engineering
@@ -307,22 +307,22 @@ class TestDataPipelineValidation(unittest.TestCase):
 
         # Step 3: Store pipeline metrics
         self.metrics_db.store_metric(
-            'pipeline.feature_engineering_time', feature_engineering_time,
-            {'symbol': symbol, 'pipeline': 'feature_engineering'}
+            "pipeline.feature_engineering_time", feature_engineering_time,
+            {"symbol": symbol, "pipeline": "feature_engineering"}
         )
         self.metrics_db.store_metric(
-            'pipeline.storage_time', storage_time,
-            {'symbol': symbol, 'pipeline': 'storage'}
+            "pipeline.storage_time", storage_time,
+            {"symbol": symbol, "pipeline": "storage"}
         )
         self.metrics_db.store_metric(
-            'pipeline.features_count', len(engineered_features.columns),
-            {'symbol': symbol, 'pipeline': 'feature_count'}
+            "pipeline.features_count", len(engineered_features.columns),
+            {"symbol": symbol, "pipeline": "feature_count"}
         )
 
         # Step 4: Retrieve and validate
         query = FeatureQuery(
             symbol=symbol,
-            feature_names=['close', 'volume', 'rsi_14'],
+            feature_names=["close", "volume", "rsi_14"],
             start_date=engineered_features.index[0],
             end_date=engineered_features.index[-1]
         )
@@ -333,7 +333,7 @@ class TestDataPipelineValidation(unittest.TestCase):
 
         # Step 5: Validate pipeline metrics
         metrics_query = MetricQuery(
-            metric_names=['pipeline.feature_engineering_time', 'pipeline.storage_time'],
+            metric_names=["pipeline.feature_engineering_time", "pipeline.storage_time"],
             start_time=datetime.now() - timedelta(hours=1),
             end_time=datetime.now()
         )
@@ -347,7 +347,7 @@ class TestDataPipelineValidation(unittest.TestCase):
 
     def test_multi_symbol_pipeline(self):
         """Test data pipeline with multiple symbols."""
-        symbols = ['AAPL', 'GOOGL', 'MSFT']
+        symbols = ["AAPL", "GOOGL", "MSFT"]
 
         # Process multiple symbols
         for symbol in symbols:
@@ -361,15 +361,15 @@ class TestDataPipelineValidation(unittest.TestCase):
 
             # Metrics
             self.metrics_db.store_metric(
-                'pipeline.symbol_processed', 1,
-                {'symbol': symbol, 'pipeline': 'multi_symbol'}
+                "pipeline.symbol_processed", 1,
+                {"symbol": symbol, "pipeline": "multi_symbol"}
             )
 
             self.assertIsNotNone(feature_set_id)
 
         # Verify all symbols processed
         metrics_query = MetricQuery(
-            metric_names=['pipeline.symbol_processed'],
+            metric_names=["pipeline.symbol_processed"],
             start_time=datetime.now() - timedelta(hours=1),
             end_time=datetime.now()
         )
@@ -378,13 +378,12 @@ class TestDataPipelineValidation(unittest.TestCase):
         self.assertEqual(len(results), len(symbols))
 
         # Verify feature sets
-        feature_sets = self.feature_store.list_feature_sets()
-        processed_symbols = {fs.symbol for fs in feature_sets}
-        self.assertTrue(set(symbols).issubset(processed_symbols))
+        stored_symbols = self.feature_store.list_symbols()
+        self.assertTrue(set(symbols).issubset(set(stored_symbols)))
 
     def test_data_quality_validation(self):
         """Test data quality validation in the pipeline."""
-        symbol = 'AAPL'
+        symbol = "AAPL"
         data = self.test_data[symbol].copy()
 
         # Process through pipeline
@@ -397,22 +396,22 @@ class TestDataPipelineValidation(unittest.TestCase):
 
         # Check that OHLC relationships are maintained
         retrieved = self.feature_store.retrieve_features(
-            FeatureQuery(symbol=symbol, feature_names=['open', 'high', 'low', 'close'])
+            FeatureQuery(symbol=symbol, feature_names=["open", "high", "low", "close"])
         )
 
         # Verify OHLC relationships are valid
         valid_rows = retrieved.dropna()
         if len(valid_rows) > 0:
             # Basic OHLC relationships
-            self.assertTrue(all(valid_rows['high'] >= valid_rows['low']))
-            self.assertTrue(all(valid_rows['low'] <= valid_rows['close']))
-            self.assertTrue(all(valid_rows['high'] >= valid_rows['close']))
-            self.assertTrue(all(valid_rows['low'] <= valid_rows['open']))
-            self.assertTrue(all(valid_rows['high'] >= valid_rows['open']))
+            self.assertTrue(all(valid_rows["high"] >= valid_rows["low"]))
+            self.assertTrue(all(valid_rows["low"] <= valid_rows["close"]))
+            self.assertTrue(all(valid_rows["high"] >= valid_rows["close"]))
+            self.assertTrue(all(valid_rows["low"] <= valid_rows["open"]))
+            self.assertTrue(all(valid_rows["high"] >= valid_rows["open"]))
 
     def test_performance_characteristics(self):
         """Test performance characteristics of the data pipeline."""
-        symbol = 'AAPL'
+        symbol = "AAPL"
         data = self.test_data[symbol]
 
         # Test feature engineering performance
@@ -437,12 +436,12 @@ class TestDataPipelineValidation(unittest.TestCase):
         retrieval_time = time.time() - start_time
 
         # Store performance metrics
-        self.metrics_db.store_metric('performance.feature_engineering', feature_time,
-                                   {'test': 'performance', 'operation': 'feature_engineering'})
-        self.metrics_db.store_metric('performance.storage', storage_time,
-                                   {'test': 'performance', 'operation': 'storage'})
-        self.metrics_db.store_metric('performance.retrieval', retrieval_time,
-                                   {'test': 'performance', 'operation': 'retrieval'})
+        self.metrics_db.store_metric("performance.feature_engineering", feature_time,
+                                   {"test": "performance", "operation": "feature_engineering"})
+        self.metrics_db.store_metric("performance.storage", storage_time,
+                                   {"test": "performance", "operation": "storage"})
+        self.metrics_db.store_metric("performance.retrieval", retrieval_time,
+                                   {"test": "performance", "operation": "retrieval"})
 
         # Performance assertions (reasonable bounds)
         self.assertLess(feature_time, 30.0)  # Should complete within 30 seconds
@@ -459,9 +458,10 @@ class TestDataPipelineValidation(unittest.TestCase):
         data_str = str(df.values.tobytes()) + str(df.index.tolist()) + str(df.columns.tolist())
         return hashlib.sha256(data_str.encode()).hexdigest()
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     # Set up logging
-    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
     # Run tests
     unittest.main(verbosity=2)
+

@@ -1,6 +1,6 @@
 import os
 
-from agents.hyperparameter_search_agent import HyperparameterSearchAgent
+from src.agents.hyperparameter_search_agent import HyperparameterSearchAgent
 from models.model_zoo import ModelZoo, _HAS_NEURALFORECAST
 
 

@@ -241,8 +241,14 @@ class FundamentalsDataAgent:
                 combined['sector'] = profile.get('sector')
                 combined['industry'] = profile.get('industry')
                 combined['beta'] = profile.get('beta')
-                combined['market_cap'] = profile.get('mktCap')
-                combined['log_market_cap'] = np.log(combined['market_cap']) if 'market_cap' in combined.columns else np.nan
+                
+                # Handle market cap (try 'marketCap' first, then 'mktCap')
+                market_cap = profile.get('marketCap') or profile.get('mktCap')
+                combined['market_cap'] = market_cap
+                
+                # Safely calculate log market cap
+                combined['market_cap'] = pd.to_numeric(combined['market_cap'], errors='coerce')
+                combined['log_market_cap'] = np.log(combined['market_cap'])
 
             return combined
 
@@ -343,5 +349,4 @@ class FundamentalsDataAgent:
             logger.info(f"Successfully updated fundamentals for {symbol}")
             return features_df
 
-        return None</content>
-<parameter name="filePath">c:\Users\spreu\Documents\agentic_forecast\agents\fundamentals_data_agent.py
+        return None

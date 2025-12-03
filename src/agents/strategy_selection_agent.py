@@ -374,5 +374,4 @@ class StrategySelectionAgent:
         if current_regimes.get('labor_regime') == 'contraction':
             context['risk_environment'] = 'cautious'
 
-        return context</content>
-<parameter name="filePath">c:\Users\spreu\Documents\agentic_forecast\agents\strategy_selection_agent.py
+        return context

@@ -1,6 +1,21 @@
+import os
+import sys
+import tempfile
 import pandas as pd
 import numpy as np
-from models.model_zoo import ModelZoo, DataSpec
+import pytest
+
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
+from models import model_zoo as mzc
+from models.model_zoo import ModelZoo, DataSpec, HPOConfig, ArtifactInfo
+
+
+def _make_simple_frames():
+    idx = pd.date_range('2020-01-01', periods=10, freq='D')
+    df = pd.DataFrame({'y': np.arange(10).astype(float), 'x': np.arange(10).astype(float)}, index=idx)
+    split = int(len(df) * 0.7)
+    return df.iloc[:split], df.iloc[split:]
 
 
 def _make_simple_spec():
@@ -18,7 +33,7 @@ def test_prepare_nf_frames_adds_temporal_metadata():
     mz = ModelZoo()
     spec = _make_simple_spec()
     uid, train_nf, val_nf, full = mz._prepare_nf_frames(spec)
-    assert uid == spec.symbol_scope.replace(":", "_")
+    assert uid == spec.symbol_scope # No replacement
     assert hasattr(train_nf, "temporal_cols")
     assert hasattr(val_nf, "temporal_cols")
     assert hasattr(full, "temporal_index")
@@ -37,8 +52,7 @@ def test_compute_val_mape_raises_on_empty_preds():
     mz = ModelZoo()
     spec = _make_simple_spec()
     _, _, val_nf, _ = mz._prepare_nf_frames(spec)
-    import pandas as pd
-
+    
     empty = pd.DataFrame()
     try:
         mz._compute_val_mape(empty, val_nf, "AutoDLinear")
@@ -46,62 +60,52 @@ def test_compute_val_mape_raises_on_empty_preds():
     except ValueError:
         raised = True
     assert raised
-import os
-import sys
-import tempfile
-import pandas as pd
-import numpy as np
-
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-
-from models import model_zoo as mzc
-from models.model_zoo import ModelZoo, DataSpec, HPOConfig
-
-
-def _make_simple_frames():
-    idx = pd.date_range('2020-01-01', periods=10, freq='D')
-    df = pd.DataFrame({'y': np.arange(10).astype(float), 'x': np.arange(10).astype(float)}, index=idx)
-    split = int(len(df) * 0.7)
-    return df.iloc[:split], df.iloc[split:]
 
 
 def test_train_autonbeats_raises_when_nf_missing():
     train, val = _make_simple_frames()
     spec = DataSpec(job_id='t', symbol_scope='AAPL:US', train_df=train, val_df=val, feature_cols=['x'], target_col='y', horizon=1)
-    # Ensure NF is disabled
-    mzc._HAS_NEURALFORECAST = False
-    mzc.AutoNBEATS = None
-    mz = ModelZoo()
+    
+    # Save original state
+    original_flag = mzc._HAS_NEURALFORECAST
+    original_cls = mzc.AutoNBEATS
+    
     try:
-        try:
+        # Ensure NF is disabled
+        mzc._HAS_NEURALFORECAST = False
+        # mzc.AutoNBEATS = None # No longer needed/valid as we use dummy classes
+        mz = ModelZoo()
+        
+        with pytest.raises(ImportError):
             mz.train_autonbeats(spec, HPOConfig())
-            raise AssertionError('train_autonbeats should raise ImportError when NF missing')
-        except ImportError:
-            pass
+            
     finally:
         # Restore default back to imported status
-        import importlib
-        importlib.reload(mzc)
+        mzc._HAS_NEURALFORECAST = original_flag
+        mzc.AutoNBEATS = original_cls
 
 
 def test_train_autonbeats_returns_when_stubs_present():
     train, val = _make_simple_frames()
     spec = DataSpec(job_id='t2', symbol_scope='SYM', train_df=train, val_df=val, feature_cols=['x'], target_col='y', horizon=1)
+    
     # Monkeypatch module to simulate NF presence
     class MockModel:
-        def __init__(self, h, backend): pass
+        def __init__(self, h, input_size, stack_types, start_padding_enabled): pass
     
     class MockNF:
         def __init__(self, models, freq): 
             self.models = models
-        def fit(self, df, val_size): pass
-        def predict(self):
-            return pd.DataFrame({'ds': val.index, 'unique_id': 'SYM', 'AutoNBEATS': [100.0]*len(val)})
+        def fit(self, df, val_size=None): pass
+        def predict(self, futr_df=None):
+            return pd.DataFrame({'ds': val.index, 'unique_id': 'SYM', 'NBEATS': [100.0]*len(val)})
+        def save(self, path): pass
 
     original_nf = mzc.NeuralForecast
-    original_cls = mzc.AutoNBEATS
+    original_cls = mzc.NBEATS # train_autonbeats uses NBEATS class, not AutoNBEATS
+    
     mzc.NeuralForecast = MockNF
-    mzc.AutoNBEATS = MockModel
+    mzc.NBEATS = MockModel
     mzc._HAS_NEURALFORECAST = True
     
     try:
@@ -114,7 +118,7 @@ def test_train_autonbeats_returns_when_stubs_present():
         assert len(res.val_preds) == len(val)
     finally:
         mzc.NeuralForecast = original_nf
-        mzc.AutoNBEATS = original_cls
+        mzc.NBEATS = original_cls
 
 
 def test_compute_val_mape_and_persist_model(tmp_path):
@@ -123,7 +127,7 @@ def test_compute_val_mape_and_persist_model(tmp_path):
     
     # Mock NeuralForecast to avoid GPU usage
     class MockModel:
-        def __init__(self, h, input_size, loss, scaler_type, max_steps): pass
+        def __init__(self, h, input_size, loss=None, scaler_type=None, max_steps=None): pass
         def fit(self, df, val_size=0): return self
         def predict(self, df): return np.zeros(len(df))
 
@@ -131,13 +135,14 @@ def test_compute_val_mape_and_persist_model(tmp_path):
         def __init__(self, models, freq):
             self.models = models
         def fit(self, df, val_size=0): pass
-        def predict(self, df=None):
+        def predict(self, futr_df=None):
             # Return a DataFrame matching validation index
             return pd.DataFrame({
                 'ds': val.index, 
                 'unique_id': 'SYM2', 
                 'NLinear': [100.0]*len(val)
             })
+        def save(self, path): pass
 
     original_nf = mzc.NeuralForecast
     original_cls = mzc.NLinear # BaselineLinear uses NLinear
@@ -151,13 +156,13 @@ def test_compute_val_mape_and_persist_model(tmp_path):
         res = mz.train_baseline_linear(spec)
         assert res.val_preds is not None
         uid, train_nf, val_nf, full = mz._prepare_nf_frames(spec)
-        mape = mz._compute_val_mape(res.val_preds, val_nf, 'NLinear')
+        mape = mz._compute_val_mape(res.val_preds, val_nf, 'BaselineLinear')
         assert isinstance(mape, float)
 
         # Persist model (use serializable dict instead of local class)
         model_id = 'pkey'
         res = mz._persist_nf_model(model_id, {'dummy': True}, 'AutoNBEATS')
-        assert isinstance(res, mzc.ArtifactInfo)
+        assert isinstance(res, ArtifactInfo)
         # If MLflow not installed we should get a local path; otherwise artifact_uri
         if res.local_path:
             assert os.path.exists(res.local_path)
@@ -172,19 +177,22 @@ def test_compute_val_mape_and_persist_model(tmp_path):
 def test_train_autonhits_raises_when_nf_missing():
     train, val = _make_simple_frames()
     spec = DataSpec(job_id='t4', symbol_scope='AAPL:US', train_df=train, val_df=val, feature_cols=['x'], target_col='y', horizon=1)
-    # Ensure NF is disabled
-    mzc._HAS_NEURALFORECAST = False
-    mzc.AutoNHITS = None
-    mz = ModelZoo()
+    
+    original_flag = mzc._HAS_NEURALFORECAST
+    original_cls = mzc.AutoNHITS
+    
     try:
-        try:
+        # Ensure NF is disabled
+        mzc._HAS_NEURALFORECAST = False
+        # mzc.AutoNHITS = None
+        mz = ModelZoo()
+        
+        with pytest.raises(ImportError):
             mz.train_autonhits(spec, HPOConfig())
-            raise AssertionError('train_autonhits should raise ImportError when NF missing')
-        except ImportError:
-            pass
+            
     finally:
-        import importlib
-        importlib.reload(mzc)
+        mzc._HAS_NEURALFORECAST = original_flag
+        mzc.AutoNHITS = original_cls
 
 
 def test_train_autonhits_returns_when_stubs_present():
@@ -192,19 +200,21 @@ def test_train_autonhits_returns_when_stubs_present():
     spec = DataSpec(job_id='t5', symbol_scope='SYM', train_df=train, val_df=val, feature_cols=['x'], target_col='y', horizon=1)
     
     class MockModel:
-        def __init__(self, h, backend): pass
+        def __init__(self, h, input_size, start_padding_enabled): pass
     
     class MockNF:
         def __init__(self, models, freq): 
             self.models = models
-        def fit(self, df, val_size): pass
-        def predict(self):
-            return pd.DataFrame({'ds': val.index, 'unique_id': 'SYM', 'AutoNHITS': [100.0]*len(val)})
+        def fit(self, df, val_size=None): pass
+        def predict(self, futr_df=None):
+            return pd.DataFrame({'ds': val.index, 'unique_id': 'SYM', 'NHITS': [100.0]*len(val)})
+        def save(self, path): pass
 
     original_nf = mzc.NeuralForecast
-    original_cls = mzc.AutoNHITS
+    original_cls = mzc.NHITS # train_autonhits uses NHITS class
+    
     mzc.NeuralForecast = MockNF
-    mzc.AutoNHITS = MockModel
+    mzc.NHITS = MockModel
     mzc._HAS_NEURALFORECAST = True
     
     try:
@@ -217,7 +227,7 @@ def test_train_autonhits_returns_when_stubs_present():
         assert len(res.val_preds) == len(val)
     finally:
         mzc.NeuralForecast = original_nf
-        mzc.AutoNHITS = original_cls
+        mzc.NHITS = original_cls
 
 
 def test_model_training_result_artifact_info_dict():

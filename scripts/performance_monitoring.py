@@ -363,5 +363,4 @@ def main():
         sys.exit(1)
 
 if __name__ == "__main__":
-    main()</content>
-<parameter name="filePath">c:\Users\spreu\Documents\agentic_forecast\scripts\performance_monitoring.py
+    main()

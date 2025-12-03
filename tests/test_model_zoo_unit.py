@@ -9,7 +9,7 @@ from unittest.mock import patch, MagicMock
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from models.model_zoo import ModelZoo, DataSpec, HPOConfig, ModelTrainingResult
-from agents.hyperparameter_search_agent import HyperparameterSearchAgent
+from src.agents.hyperparameter_search_agent import HyperparameterSearchAgent
 
 def _make_sample_frames():
     dates = pd.date_range('2023-01-01', periods=10, freq='D')

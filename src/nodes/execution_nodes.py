@@ -23,14 +23,19 @@ try:
         from neuralforecast.auto import AutoNHITS, AutoNBEATS, AutoDLinear, AutoTFT
         from neuralforecast.models import NLinear
         import torch
-        from models.gnn_model import GNNModel
+        try:
+            from models.gnn_model import GNNModel
+        except ImportError:
+            GNNModel = None
         _HAS_HEAVY_DEPS = True
     else:
         nf = NeuralForecast = AutoNHITS = AutoNBEATS = AutoDLinear = AutoTFT = NLinear = None
         torch = None
         GNNModel = None
         _HAS_HEAVY_DEPS = False
-except Exception:
+except Exception as e:
+    logger = logging.getLogger(__name__)
+    logger.error(f"Failed to import heavy dependencies: {e}")
     nf = NeuralForecast = AutoNHITS = AutoNBEATS = AutoDLinear = AutoTFT = NLinear = None
     torch = None
     GNNModel = None
@@ -269,7 +274,12 @@ def forecasting_node(state: GraphState) -> GraphState:
         
         for model_name, model_result in model_results.items():
             if model_result:
-                model_path = model_result.artifact_path
+                model_path = model_result.artifact_info.path if model_result.artifact_info else None
+                # Allow BaselineLinear to proceed without a path, as it's retrained on the fly
+                if not model_path and model_result.model_family != "BaselineLinear":
+                    logger.warning(f"No artifact path found for {model_name} - {symbol}")
+                    continue
+                    
                 if model_result.model_family == "GNN":
                     # Skip GNN for backtest mode
                     if not _HAS_HEAVY_DEPS or GNNModel is None:
@@ -374,6 +384,9 @@ def forecasting_node(state: GraphState) -> GraphState:
                                 nf_inst.fit(df=train_nf_local)
                                 column_name = 'NLinear'
                         else:
+                            if NeuralForecast is None:
+                                logger.error(f"NeuralForecast not available but model {model_result.model_family} requires it. Skipping.")
+                                continue
                             nf_inst = NeuralForecast.load(path=model_path)
                             
                             # Handle different model family naming

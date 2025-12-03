@@ -168,5 +168,4 @@ class FrankfurterClient:
                 })
 
         df = pd.DataFrame(records)
-        return df</content>
-<parameter name="filePath">c:\Users\spreu\Documents\agentic_forecast\src\frankfurter_client.py
+        return df

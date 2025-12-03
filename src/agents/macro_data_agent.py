@@ -217,5 +217,4 @@ class MacroDataAgent:
             'processed_features': processed_features,
             'collection_timestamp': datetime.now(),
             'indicators_collected': list(raw_data.keys())
-        }</content>
-<parameter name="filePath">c:\Users\spreu\Documents\agentic_forecast\agents\macro_data_agent.py
+        }

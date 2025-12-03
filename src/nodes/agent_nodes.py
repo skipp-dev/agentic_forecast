@@ -84,26 +84,59 @@ def analytics_agent_node(state: GraphState) -> GraphState:
     return state
 
 from ..agents.decision_agent import DecisionAgent
+from src.analytics.trust_score import TrustScoreCalculator
 
 def decision_agent_node(state: GraphState, config: dict) -> GraphState:
     """
     Runs the decision agent to select the best model and recommend actions.
+    Also calculates Trust Scores.
     """
     logger.info("--- Node: Decision Agent ---")
     agent = DecisionAgent(config.get('hpo', {}))
+    trust_calculator = TrustScoreCalculator()
     
     # Convert analytics_summary back to DataFrame for the agent
     analytics_summary = pd.DataFrame(state.get('analytics_summary', []))
+    
+    # Calculate Trust Scores
+    trust_scores = trust_calculator.calculate_trust_scores(
+        performance_summary=analytics_summary,
+        risk_kpis=state.get('risk_kpis', {}),
+        guardrail_flags=state.get('guardrail_log', []),
+        drift_metrics=state.get('drift_metrics', {})
+    )
+    state['trust_scores'] = trust_scores
+    logger.info(f"Calculated trust scores for {len(trust_scores)} symbols")
+
+    # Save trust scores to JSON for Prometheus exporter
+    try:
+        output_path = "data/metrics/trust_scores.json"
+        os.makedirs(os.path.dirname(output_path), exist_ok=True)
+        import json
+        with open(output_path, "w") as f:
+            json.dump(trust_scores, f, indent=2)
+        logger.info(f"Saved trust scores to {output_path}")
+    except Exception as e:
+        logger.error(f"Failed to save trust scores: {e}")
     
     best_models = agent.select_best_model(analytics_summary, state.get('anomalies', {}))
     
     recommended_actions = []
     for symbol, model in best_models.items():
         model_family = model.get('model_family', 'UnknownModel')
-        action = f"Promote {model_family} for {symbol}"
+        
+        # Use Trust Score to determine action
+        trust_score = trust_scores.get(symbol, 0.5)
+        trading_decision = agent.get_trading_decision(symbol, trust_score)
+        
+        if trading_decision['auto_trade_allowed']:
+            action = f"Promote {model_family} for {symbol} (Trust: {trust_score:.2f}, Size: {trading_decision['position_size_multiplier']}x)"
+        else:
+            action = f"Hold {model_family} for {symbol} (Trust: {trust_score:.2f} too low)"
+            
         mape = model.get('mape')
         if mape is not None and not pd.isna(mape):
-            action += f" (MAPE {float(mape):.3f})"
+            action += f" [MAPE {float(mape):.3f}]"
         recommended_actions.append(action)
 
     # Check if HPO is needed
@@ -454,7 +487,11 @@ def forecast_agent_node(state: GraphState) -> GraphState:
 
         # Get forecasts and analytics data
         forecasts = state.get('forecasts', {})
-        analytics_summary = pd.DataFrame(state.get('analytics_summary', []))
+        analytics_summary_data = state.get('analytics_summary', [])
+        analytics_summary = pd.DataFrame(analytics_summary_data)
+
+        # Update policy based on performance
+        agent.update_policy_from_performance(analytics_summary_data)
 
         # Get guardrail information from state
         guardrail_log = state.get('guardrail_log', [])

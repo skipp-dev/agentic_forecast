@@ -33,7 +33,7 @@ ibkr:
 # --- Scaling Configuration ---
 scaling:
   # Maximum number of symbols to process in a single run
-  max_symbols: 500  # Run for all symbols in watchlist
+  max_symbols: 600  # Run for all symbols in watchlist
 
   # Batch processing settings - Maximum throughput
   batch_size: 100  # Maximum symbols per batch
@@ -59,6 +59,8 @@ fmp:
   api_key: "${FMP_API_KEY}"
   # API call rate limit (calls per minute)
   rate_limit: 300
+  enabled: true
+  universe: "top_liquid"
 
 # --- CoinGecko Configuration ---
 coingecko:
@@ -102,13 +104,21 @@ news_api:
   rate_limit: 1 # FREE TIER: 100 requests per 24 hours total (not per minute!)
   max_articles: 5 # Reduced for free tier
 
+# --- NewsAPI.ai Configuration ---
+newsapi_ai:
+  # To enable advanced news intelligence, provide your NewsAPI.ai key here or as an environment variable.
+  # Get from https://newsapi.ai/
+  api_key: "${NEWSAPI_AI_KEY}"
+  enabled: true
+  rate_limit: 60 # Adjust based on your plan
+
 # --- LangSmith Configuration ---
 # To enable tracing, set the LANGCHAIN_TRACING_V2 environment variable to "true"
 # and provide your API key here or as an environment variable.
 langsmith:
   api_key: "${LANGCHAIN_API_KEY}" # Optional: Your LangSmith API key
   project: "agentic_forecast" # Default project name
-  tracing_enabled: true  # Enable LLM tracing
+  tracing_enabled: false  # Enable LLM tracing
 
 # --- LLM Configuration ---
 llm:

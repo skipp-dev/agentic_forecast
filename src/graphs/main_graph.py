@@ -2,7 +2,7 @@ from langgraph.graph import StateGraph, END
 from functools import partial
 from .state import GraphState
 from ..nodes import (
-    data_nodes, 
+    data_nodes_optimized as data_nodes, 
     agent_nodes, 
     execution_nodes, 
     utility_nodes, 
@@ -43,6 +43,12 @@ def should_continue(state: GraphState) -> str:
             elif decision['type'] == 'hpo' and hpo_attempts < max_hpo_attempts:
                 print(f"🔄 Continuous learning triggering HPO for {decision.get('symbol', 'all')}")
                 return "hpo"
+
+    # Check for WEEKEND_HPO run type
+    run_type = state.get('run_type', 'DAILY')
+    if run_type == 'WEEKEND_HPO' and hpo_attempts < max_hpo_attempts:
+        print("🔄 WEEKEND_HPO triggering HPO run")
+        return "hpo"
 
     # Original logic for drift and HPO triggers
     if state.get('hpo_triggered') and hpo_attempts < max_hpo_attempts:

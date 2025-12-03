@@ -250,5 +250,4 @@ class AlphaVantagePriceAgent:
         # Intraday range
         features_df['intraday_range'] = (features_df['high'] - features_df['low']) / features_df['close']
 
-        return features_df</content>
-<parameter name="filePath">c:\Users\spreu\Documents\agentic_forecast\agents\alpha_vantage_price_agent.py
+        return features_df

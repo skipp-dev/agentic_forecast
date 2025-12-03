@@ -9,13 +9,17 @@ human-readable insights with uncertainty quantification and scenario analysis.
 import os
 import sys
 import json
+import yaml
 from typing import Dict, List, Any, Optional, Tuple, Literal
 import logging
 from datetime import datetime
+import pandas as pd
 
 # Add paths
 sys.path.append(os.path.dirname(__file__))
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
+
+from agents.policy_optimizer import PolicyOptimizer
 
 logger = logging.getLogger(__name__)
 
@@ -41,15 +45,184 @@ class ForecastAgent:
     human/trading decisions, providing structured insights with uncertainty quantification.
     """
 
-    def __init__(self, llm_client=None):
+    def __init__(self, llm_client=None, config_path: str = "src/configs/model_families.yaml"):
         """
         Initialize the Forecast Agent.
 
         Args:
             llm_client: LLM client for generating narrative comments (optional)
+            config_path: Path to model family policy configuration
         """
         self.llm_client = llm_client
+        self.config_path = config_path
+        self.config = self._load_config(config_path)
+        self.policy_optimizer = PolicyOptimizer(default_policy=self.config)
         logger.info("Forecast Agent initialized")
+
+    def update_policy_from_performance(self, performance_summary: List[Dict[str, Any]]) -> None:
+        """
+        Update model selection policy based on recent performance metrics.
+        
+        Args:
+            performance_summary: List of dicts with keys ['symbol', 'model_family', 'mape']
+        """
+        if not performance_summary:
+            return
+            
+        try:
+            df = pd.DataFrame(performance_summary)
+            new_policy = self.policy_optimizer.optimize_policy(df)
+            
+            # Update in-memory config
+            self.config = new_policy
+            logger.info("Updated model family policy based on performance metrics")
+            
+            # Optional: Persist to disk? 
+            # For now, we keep it in memory for the session. 
+            # If we wanted to persist:
+            # with open(self.config_path, 'w') as f:
+            #     yaml.dump(new_policy, f)
+                
+        except Exception as e:
+            logger.error(f"Failed to update policy from performance: {e}")
+
+    def _load_config(self, path: str) -> Dict[str, Any]:
+        """Load model family policy configuration."""
+        try:
+            if os.path.exists(path):
+                with open(path, 'r') as f:
+                    return yaml.safe_load(f)
+            else:
+                logger.warning(f"Config file not found at {path}, using defaults")
+                return {}
+        except Exception as e:
+            logger.error(f"Failed to load config: {e}")
+            return {}
+
+    def _apply_model_policy(
+        self,
+        symbol: str,
+        horizon: int,
+        available_forecasts: Dict[str, float],
+        error_metrics: Dict[str, Any]
+    ) -> Tuple[float, str, Dict[str, Any]]:
+        """
+        Apply model family policy to select champion or compute ensemble.
+        
+        Returns:
+            Tuple of (predicted_return, selected_family, metadata)
+        """
+        # Determine policy bucket (default for now, could be extended for low_data etc.)
+        policy = self.config.get('default_policy', {})
+        
+        # Determine horizon category
+        if horizon <= 2:
+            horizon_policy = policy.get('short_horizon', {})
+        elif horizon <= 10:
+            horizon_policy = policy.get('medium_horizon', {})
+        else:
+            horizon_policy = policy.get('long_horizon', {})
+            
+        primary_families = horizon_policy.get('primary', [])
+        secondary_families = horizon_policy.get('secondary', [])
+        baseline_families = horizon_policy.get('baseline', [])
+        
+        # Find available primary models
+        available_primary = [f for f in primary_families if f in available_forecasts]
+        available_secondary = [f for f in secondary_families if f in available_forecasts]
+        
+        champion_family = "Unknown"
+        final_prediction = 0.0
+        metadata: Dict[str, Any] = {}
+        
+        # Champion selection logic
+        if available_primary:
+            # Pick best primary based on recent metrics if available, else first
+            # For now, simple logic: pick first available primary
+            champion_family = available_primary[0]
+            final_prediction = available_forecasts[champion_family]
+        elif available_secondary:
+            champion_family = available_secondary[0]
+            final_prediction = available_forecasts[champion_family]
+        elif baseline_families:
+             # Fallback to baseline
+             available_baseline = [f for f in baseline_families if f in available_forecasts]
+             if available_baseline:
+                 champion_family = available_baseline[0]
+                 final_prediction = available_forecasts[champion_family]
+             else:
+                 # Last resort: any available model
+                 if available_forecasts:
+                     champion_family = list(available_forecasts.keys())[0]
+                     final_prediction = available_forecasts[champion_family]
+        else:
+             if available_forecasts:
+                 champion_family = list(available_forecasts.keys())[0]
+                 final_prediction = available_forecasts[champion_family]
+
+        # Ensemble logic
+        if self.config.get('enable_ensembling', False) and available_primary and available_secondary:
+            weights = horizon_policy.get('ensemble_weights', {'primary': 1.0, 'secondary': 0.0})
+            w_p = weights.get('primary', 1.0)
+            w_s = weights.get('secondary', 0.0)
+            
+            # Simple ensemble: average of available primaries * w_p + average of available secondaries * w_s
+            # Normalize weights if needed
+            total_w = w_p + w_s
+            if total_w > 0:
+                pred_p = sum(available_forecasts[f] for f in available_primary) / len(available_primary)
+                pred_s = sum(available_forecasts[f] for f in available_secondary) / len(available_secondary)
+                
+                ensemble_pred = (pred_p * w_p + pred_s * w_s) / total_w
+                final_prediction = ensemble_pred
+                champion_family = f"Ensemble({champion_family}+{available_secondary[0]})"
+                metadata['ensemble_components'] = available_primary + available_secondary
+
+        metadata['selected_family'] = champion_family
+        return final_prediction, champion_family, metadata
+
+    def _compare_with_baselines(
+        self,
+        symbol: str,
+        horizon: int,
+        forecasts: Dict[str, float],
+        champion_family: str,
+        champion_value: float
+    ) -> Dict[str, Any]:
+        """
+        Compare champion forecast with baselines (AutoDLinear, BaselineLinear).
+        """
+        comparison: Dict[str, Any] = {}
+        baselines = ["AutoDLinear", "BaselineLinear"]
+        
+        for baseline in baselines:
+            if baseline in forecasts:
+                baseline_val = forecasts[baseline]
+                gap = champion_value - baseline_val
+                comparison[f"gap_vs_{baseline}"] = gap
+                
+                # Check for significant deviation (e.g. > 5% difference in return prediction)
+                if abs(gap) > 0.05:
+                    comparison[f"warning_vs_{baseline}"] = f"Significant deviation from {baseline}: {gap:.2%}"
+                    
+                # Specific check: Deep model vs AutoDLinear
+                if baseline == "AutoDLinear" and champion_family not in baselines:
+                    # If deep model predicts huge move but DLinear is flat, flag it
+                    if abs(champion_value) > 0.03 and abs(baseline_val) < 0.01:
+                         comparison["deep_vs_linear_divergence"] = "Deep model predicts large move not seen by linear baseline"
+                    
+                    # Direction mismatch check
+                    # Only flag if both predict a move > 1% in opposite directions
+                    if (champion_value * baseline_val < 0) and (abs(champion_value) > 0.01) and (abs(baseline_val) > 0.01):
+                        comparison["deep_vs_linear_direction_mismatch"] = f"Direction mismatch: Deep {champion_value:.1%} vs Linear {baseline_val:.1%}"
+
+                # Specific check: Risk Baseline (BaselineLinear)
+                if baseline == "BaselineLinear":
+                    # If champion is way off from simple regression, it's a risk flag
+                    if abs(gap) > 0.10: # 10% divergence is huge
+                        comparison["risk_baseline_divergence"] = "CRITICAL: Champion model diverges >10% from risk baseline"
+
+        return comparison
 
     def interpret_forecasts(
         self,
@@ -63,7 +236,11 @@ class ForecastAgent:
 
         Args:
             symbol: Stock symbol
-            forecasts: List of forecast objects with horizon and predicted_return
+            forecasts: List of forecast objects with horizon and predicted_return. 
+                       Note: This input format assumes pre-selected forecasts. 
+                       If we want to do selection here, we need the raw forecasts per family.
+                       However, the current pipeline seems to pass a list of forecasts where each might be from a different model?
+                       Let's assume 'forecasts' input here is a list of dicts, where each dict MIGHT have 'model_family'.
             error_metrics: Historical error metrics (MAE, MAPE, SMAPE, SWASE, directional_accuracy)
             regime_and_guardrail_info: Current regime flags and guardrail statuses
 
@@ -77,12 +254,34 @@ class ForecastAgent:
         if regime_and_guardrail_info:
             guardrail_flags = regime_and_guardrail_info.get("guardrail_flags", [])
 
+        # Group forecasts by horizon to apply policy
+        forecasts_by_horizon: Dict[int, Dict[str, float]] = {}
+        for f in forecasts:
+            h = f.get("horizon", 1)
+            if h not in forecasts_by_horizon:
+                forecasts_by_horizon[h] = {}
+            
+            # If input has model_family, use it. If not, assume it's the only one or "Unknown"
+            family = f.get("model_family", "Unknown")
+            forecasts_by_horizon[h][family] = f.get("predicted_return", 0.0)
+
         # Build horizon forecasts with confidence
         horizon_forecasts = []
-        for forecast in forecasts:
-            horizon = forecast.get("horizon", 1)
-            predicted_return = forecast.get("predicted_return", 0.0)
-
+        
+        # Iterate over horizons found in input
+        for horizon, family_forecasts in forecasts_by_horizon.items():
+            
+            # Apply policy to select champion/ensemble
+            predicted_return, selected_family, metadata = self._apply_model_policy(
+                symbol, horizon, family_forecasts, error_metrics
+            )
+            
+            # Compare with baselines
+            baseline_comparison = self._compare_with_baselines(
+                symbol, horizon, family_forecasts, selected_family, predicted_return
+            )
+            metadata.update(baseline_comparison)
+            
             # Compute confidence for this horizon
             confidence, confidence_reasons = self._compute_confidence_level(
                 error_metrics, guardrail_flags
@@ -97,7 +296,9 @@ class ForecastAgent:
                 "horizon": horizon,
                 "predicted_return": predicted_return,
                 "confidence": confidence,
-                "comment": comment
+                "comment": comment,
+                "selected_model_family": selected_family,
+                "selection_metadata": metadata
             })
 
         # Build risk assessment

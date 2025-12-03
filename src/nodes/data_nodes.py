@@ -40,6 +40,23 @@ def _load_data_sync(state: GraphState) -> GraphState:
     end_date = datetime.now().strftime('%Y-%m-%d')
     start_date = (datetime.now() - timedelta(days=365*2)).strftime('%Y-%m-%d') # 2 years for better feature calculation
 
+    # Initialize FMP components if enabled
+    fmp_enabled = False
+    fundamentals_agent = None
+    cross_asset_features = None
+    
+    if config.get('fmp', {}).get('enabled', False) and os.getenv('FMP_API_KEY'):
+        try:
+            from ..agents.fundamentals_data_agent import FundamentalsDataAgent
+            from ..data.cross_asset_features import CrossAssetFeatures
+            
+            fundamentals_agent = FundamentalsDataAgent(api_key=os.getenv('FMP_API_KEY'), config=config)
+            cross_asset_features = CrossAssetFeatures(config=config)
+            fmp_enabled = True
+            logger.info("✅ FMP Fundamentals enabled")
+        except Exception as e:
+            logger.warning(f"Failed to initialize FMP components: {e}")
+
     logger.info(f"Fetching historical data for {len(symbols)} symbols from {start_date} to {end_date}")
 
     for i, symbol in enumerate(symbols):
@@ -71,6 +88,31 @@ def _load_data_sync(state: GraphState) -> GraphState:
 
                 # Validate data structure
                 if _validate_data_structure(data):
+                    
+                    # Enrich with fundamentals if enabled
+                    if fmp_enabled and fundamentals_agent and cross_asset_features:
+                        try:
+                            # Fetch fundamentals (cached internally by agent)
+                            fundamentals = fundamentals_agent.update_symbol_fundamentals(symbol)
+                            
+                            if fundamentals is not None and not fundamentals.empty:
+                                # Merge using cross_asset_features logic
+                                # Note: We need to convert index back to datetime for merging
+                                price_df = data.copy()
+                                price_df.index = pd.to_datetime(price_df.index)
+                                
+                                # Forward fill fundamentals to match price dates
+                                fund_daily = cross_asset_features._forward_fill_fundamentals(fundamentals, price_df.index)
+                                
+                                # Join
+                                data = price_df.join(fund_daily, how='left')
+                                
+                                # Convert index back to string
+                                data.index = data.index.astype(str)
+                                logger.info(f"   + Enriched {symbol} with {len(fundamentals.columns)} fundamental features")
+                        except Exception as e:
+                            logger.warning(f"Failed to enrich {symbol} with fundamentals: {e}")
+
                     raw_data[symbol] = data
                     logger.info(f"✅ Loaded data for {symbol} from {primary_source.upper()} ({len(data)} rows).")
                 else:

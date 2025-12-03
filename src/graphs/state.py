@@ -43,3 +43,22 @@ class GraphState(TypedDict):
     guardrail_log: List[str]
     hpo_triggered: bool
     drift_detected: bool
+    run_type: str
+
+    # LLM & News Agents Outputs
+    news_insights: Any
+    market_sentiment: str
+    key_news: List[Dict[str, Any]]
+    enriched_news: List[Dict[str, Any]]
+    llm_analytics_summary: str
+    llm_actions: List[str]
+    llm_notes: Dict[str, Any]
+    llm_hpo_plan: Dict[str, Any]
+    interpreted_forecasts: Dict[str, Any]
+    
+    # Continuous Learning
+    continuous_learning_applied: bool
+    learning_feedback: Dict[str, Any]
+    
+    # Trust Score
+    trust_scores: Dict[str, float]

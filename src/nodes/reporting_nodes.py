@@ -205,7 +205,7 @@ def generate_fallback_csv_report(state: GraphState) -> None:
                     'mape': result.best_val_mape,
                     'mae': result.best_val_mae,
                     'model_id': result.best_model_id,
-                    'artifact_path': result.artifact_info.artifact_uri
+                    'artifact_path': result.artifact_info.artifact_uri if result.artifact_info else None
                 }
                 all_performance_data.append(performance_data)
 

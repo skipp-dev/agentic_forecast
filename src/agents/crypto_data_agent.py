@@ -280,5 +280,4 @@ class CryptoDataAgent:
 
         regimes['crypto_regime'] = np.select(conditions, choices, default=default)
 
-        return regimes</content>
-<parameter name="filePath">c:\Users\spreu\Documents\agentic_forecast\agents\crypto_data_agent.py
+        return regimes

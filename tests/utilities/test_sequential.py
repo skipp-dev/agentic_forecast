@@ -4,11 +4,12 @@ import sys
 import os
 import pandas as pd
 import time
-sys.path.append(os.path.dirname(__file__))
+import asyncio
+sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 
 from src.data.unified_ingestion_v2 import UnifiedDataIngestion
 
-def test_sequential_ingestion():
+async def test_sequential_ingestion():
     """Test data ingestion with sequential processing."""
 
     print("🧪 Testing Sequential Data Ingestion")
@@ -24,14 +25,12 @@ def test_sequential_ingestion():
 
         # Create a fresh ingestion instance for each symbol
         data_ingestion = UnifiedDataIngestion(
-            use_real_data=True,
-            market_data_type=3,
-            config={}
+            use_real_data=True
         )
 
         try:
             # Initialize
-            data_ingestion.initialize()
+            await data_ingestion.initialize()
             print(f"   ✅ Initialized (source: {data_ingestion.primary_source})")
 
             # Define time window
@@ -39,7 +38,7 @@ def test_sequential_ingestion():
             start_date = (pd.Timestamp.now() - pd.Timedelta(days=365)).strftime('%Y-%m-%d')
 
             # Get data
-            df = data_ingestion.get_historical_data(
+            df = await data_ingestion.get_historical_data(
                 symbol=symbol,
                 start_date=start_date,
                 end_date=end_date,
@@ -66,7 +65,7 @@ def test_sequential_ingestion():
         finally:
             # Clean disconnect
             try:
-                data_ingestion.disconnect()
+                await data_ingestion.disconnect()
                 print(f"   🔌 Disconnected {symbol}")
             except:
                 pass
@@ -87,4 +86,4 @@ def test_sequential_ingestion():
             print(f"   {symbol}: ❌ {result}")
 
 if __name__ == "__main__":
-    test_sequential_ingestion()
+    asyncio.run(test_sequential_ingestion())
