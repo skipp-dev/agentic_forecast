@@ -53,16 +53,29 @@ class AlphaVantageClient:
         self.session = requests.Session()
 
         # Rate limiting: 300 calls per minute for premium
-        self.rate_limit = 300
+        # We use a slightly conservative limit to avoid hitting the hard cap
+        self.rate_limit = 290  # Buffer for safety
         self.time_window = 60  # seconds
         self.call_times = []
+        
+        # Minimum delay between calls to prevent bursting too fast
+        self.min_delay = 60.0 / self.rate_limit  # ~0.2 seconds
+        self.last_call_time = 0
 
         logger.info(f"Alpha Vantage client initialized with premium rate limits (entitlement: {self.entitlement}).")
 
     def _check_rate_limit(self):
         """Check and enforce rate limiting."""
+        # 1. Enforce minimum delay between calls (smoothing)
         current_time = time.time()
+        elapsed = current_time - self.last_call_time
+        if elapsed < self.min_delay:
+            time.sleep(self.min_delay - elapsed)
+            current_time = time.time()
+            
+        self.last_call_time = current_time
 
+        # 2. Enforce rolling window limit
         # Remove calls outside the time window
         self.call_times = [t for t in self.call_times if current_time - t < self.time_window]
 
@@ -70,7 +83,7 @@ class AlphaVantageClient:
             # Calculate sleep time based on the oldest call in the window
             # We need to wait until the oldest call expires
             oldest_call_time = self.call_times[0]
-            sleep_time = self.time_window - (current_time - oldest_call_time) + 0.1 # Add buffer
+            sleep_time = self.time_window - (current_time - oldest_call_time) + 0.5 # Add larger buffer
             
             if sleep_time > 0:
                 logger.warning(f"Rate limit reached ({len(self.call_times)} calls). Sleeping for {sleep_time:.2f} seconds.")

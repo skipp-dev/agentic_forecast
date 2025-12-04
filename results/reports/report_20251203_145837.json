@@ -1,0 +1,11 @@
+{
+  "report_id": "report_20251203_145837",
+  "timestamp": "20251203_145837",
+  "executive_summary": "The latest run of the forecasting platform processed three symbols with no significant performance improvements noted. While the high-performance optimization (HPO) was completed successfully, the average performance remains at zero, indicating no effective forecasting models were identified. Anomalies were detected that require further investigation, and the overall health checks passed, allowing us to proceed with caution.",
+  "performance_overview": {},
+  "risk_assessment": {},
+  "optimization_recommendations": {},
+  "research_insights": {},
+  "operational_notes": {},
+  "priority_actions": []
+}

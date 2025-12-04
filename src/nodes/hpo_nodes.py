@@ -17,8 +17,9 @@ def hpo_node(state: GraphState) -> GraphState:
         # Prefer features if available, otherwise raw_data
         data_source = state.get('features') or state.get('raw_data')
         config = state.get('config', {})
+        hpo_plan = state.get('llm_hpo_plan')
         
-        hpo_agent = HPOAgent(symbols=symbols, data_store=data_source, config=config)
+        hpo_agent = HPOAgent(symbols=symbols, data_store=data_source, config=config, hpo_plan=hpo_plan)
         hpo_agent.run_hpo_session()
         hpo_results = hpo_agent.results
 

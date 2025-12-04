@@ -1,0 +1,47 @@
+{
+  "report_id": "report_20251204_000212",
+  "timestamp": "20251204_000212",
+  "executive_summary": "The latest run of the forecasting platform focused on optimizing the symbol AAPL through a weekend HPO process. While the optimization was completed successfully, the overall performance metrics indicate no significant results, with an average performance of 0 and no models evaluated. An anomaly was detected that requires further investigation. The health checks revealed that no checks passed, highlighting a critical area for improvement.",
+  "sections": [
+    {
+      "title": "Performance Overview",
+      "audience": "mixed",
+      "body_markdown": "- Total symbols processed: 1\n- Average performance: 0\n- Total models evaluated: 0\n- Anomalies detected: 1 requiring attention."
+    },
+    {
+      "title": "HPO Optimization Details",
+      "audience": "quants",
+      "body_markdown": "- HPO completed for symbol AAPL.\n- Best performing model: BaselineLinear with a best MAPE of 0.0.\n- Total optimizations conducted: 1."
+    },
+    {
+      "title": "Health Check Summary",
+      "audience": "ops",
+      "body_markdown": "- Total checks performed: 1\n- Passed checks: 0\n- Warnings: 0\n- Critical issues: None identified, but can proceed with caution."
+    },
+    {
+      "title": "Research Insights",
+      "audience": "mixed",
+      "body_markdown": "- Key finding: 1 anomalous pattern detected.\n- Market implications analyzed with SHAP insights.\n- No significant insights from evaluation metrics."
+    }
+  ],
+  "key_risks": [
+    "No models evaluated, indicating potential issues with the forecasting process.",
+    "Health checks failed, which could lead to unreliable outputs."
+  ],
+  "key_opportunities": [
+    "Focus on investigating the detected anomaly to improve future forecasts.",
+    "Leverage insights from the HPO process to refine model selection."
+  ],
+  "actions_for_quants": [
+    "Investigate the detected anomaly and assess its impact on forecasting accuracy."
+  ],
+  "actions_for_ops": [
+    "Review health check processes to ensure future runs pass all checks."
+  ],
+  "performance_overview": {},
+  "risk_assessment": {},
+  "optimization_recommendations": {},
+  "research_insights": {},
+  "operational_notes": {},
+  "priority_actions": []
+}

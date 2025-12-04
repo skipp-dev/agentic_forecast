@@ -394,19 +394,20 @@ class ModelZoo:
         # Ensure MAE is available
         loss_fn = MAE() if MAE is not None else None
         
+        # Prepare config for Auto models
+        auto_config = {}
+        if config.max_epochs:
+             auto_config["max_steps"] = config.max_epochs
+        if config.early_stopping_patience:
+             auto_config["early_stop_patience_steps"] = config.early_stopping_patience
+
         # Initialize model
         model_kwargs = {
             "h": horizon,
             "loss": loss_fn,
-            "config": None, # Auto models handle config internally or via search_alg
+            "config": auto_config if auto_config else None, # Auto models handle config internally or via search_alg
             "num_samples": config.n_trials,
         }
-
-        if config.max_epochs:
-             model_kwargs["max_steps"] = config.max_epochs
-             
-        if config.early_stopping_patience:
-             model_kwargs["early_stop_patience_steps"] = config.early_stopping_patience
         
         # Add exogenous variables if available
         if data_spec.exog_cols:
@@ -578,3 +579,15 @@ class ModelZoo:
     train_tft = train_autotft
     train_nbeats = train_autonbeats
     train_nhits = train_autonhits
+
+    def promote_model(self, model_family: str, symbol: str):
+        """
+        Promote a model to production.
+        This is a placeholder implementation that logs the promotion.
+        In a real system, this would update a model registry or database.
+        """
+        logger.info(f"Promoting {model_family} for {symbol} to production.")
+        # Logic to tag the model artifact as 'production' or update a registry
+        # For now, we just log it.
+        pass
+

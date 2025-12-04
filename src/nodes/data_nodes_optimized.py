@@ -54,6 +54,25 @@ def _fetch_symbol_data(symbol, client, start_date, end_date, primary_source='alp
 
             # Validate data structure
             if _validate_data_structure(data):
+                # Check if data is too short (e.g. less than 30 days)
+                if len(data) < 30:
+                    logger.warning(f"Data for {symbol} is very short ({len(data)} rows). Attempting to re-fetch with full history...")
+                    try:
+                        # Retry with outputsize='full' explicitly (though it should be default)
+                        # and maybe a larger window if possible, but here we just retry to be sure
+                        data_full = client.get_daily_data(symbol, outputsize='full')
+                        if not data_full.empty:
+                             # Don't filter start date this time, take everything
+                             data_full = data_full[data_full.index <= end_date]
+                             data_full.index = data_full.index.astype(str)
+                             if len(data_full) > len(data):
+                                 logger.info(f"Re-fetch successful for {symbol}: {len(data)} -> {len(data_full)} rows")
+                                 data = data_full
+                             else:
+                                 logger.warning(f"Re-fetch for {symbol} yielded same length ({len(data_full)}). Symbol likely has short history.")
+                    except Exception as e:
+                        logger.error(f"Re-fetch failed for {symbol}: {e}")
+
                 return symbol, data, None
             else:
                 return symbol, None, "Data validation failed"

@@ -17,8 +17,8 @@ def build_initial_state(symbols, config, ctx: RunContext):
         features={},
         forecasts={},
         performance_summary=pd.DataFrame(),
-        drift_metrics=pd.DataFrame(),
-        risk_kpis=pd.DataFrame(),
+        drift_metrics={},
+        risk_kpis={},
         anomalies={},
         recommended_actions=[],
         executed_actions=[],
@@ -35,7 +35,9 @@ def build_initial_state(symbols, config, ctx: RunContext):
         drift_detected=False,
         edge_index=None,
         node_features=None,
-        symbol_to_idx={}
+        symbol_to_idx={},
+        macro_data={},
+        regimes={}
     )
 
 def run_pipeline(ctx: RunContext, symbols: list, config: dict):

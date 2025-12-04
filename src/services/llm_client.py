@@ -51,3 +51,28 @@ class OpenAILLMClient:
 
         resp = self.client.chat.completions.create(**completion_params)
         return resp.choices[0].message.content
+
+    def generate(self, messages: list, **kwargs) -> str:
+        """
+        Generate response from a list of messages (chat format).
+        """
+        # Use appropriate parameter based on model
+        completion_params = {
+            "model": self.model,
+            "messages": messages,
+        }
+
+        # o-series models (like o4-mini) don't support temperature or max_tokens parameters
+        if self.model.startswith("o"):
+            # o-series models only support max_completion_tokens
+            if "max_tokens" in kwargs:
+                 completion_params["max_completion_tokens"] = kwargs.pop("max_tokens")
+            # temperature is not supported for o-series models
+            if "temperature" in kwargs:
+                kwargs.pop("temperature")
+        else:
+            # Pass through kwargs like temperature, max_tokens
+            completion_params.update(kwargs)
+
+        resp = self.client.chat.completions.create(**completion_params)
+        return resp.choices[0].message.content

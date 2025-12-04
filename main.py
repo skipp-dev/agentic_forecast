@@ -72,11 +72,24 @@ def load_config():
                 return pattern.sub(lambda m: os.environ.get(m.group(1), m.group(0)), item)
             return item
             
-        return substitute_env_vars(config)
+        config = substitute_env_vars(config)
+        
+        # Load quality config
+        quality_path = os.path.join("config", "quality.yml")
+        if os.path.exists(quality_path):
+            try:
+                with open(quality_path, 'r') as f:
+                    quality_config = yaml.safe_load(f)
+                    config['quality'] = quality_config
+                    print(f"Loaded quality config from {quality_path}")
+            except Exception as e:
+                logger.warning(f"Failed to load quality config: {e}")
+                
+        return config
     return {}
 
-def load_symbols_from_csv(csv_path="watchlist_ibkr.csv", max_symbols=None):
-    """Load symbols from IBKR watchlist CSV file"""
+def load_symbols_from_csv(csv_path="watchlist_main.csv", max_symbols=None):
+    """Load symbols from main watchlist CSV file"""
     if os.path.exists(csv_path):
         try:
             df = pd.read_csv(csv_path)
@@ -216,16 +229,16 @@ def main():
     # Setup LangSmith tracing
     setup_langsmith(config)
     
-    # Load symbols from IBKR watchlist CSV
+    # Load symbols from main watchlist CSV
     # Use config max_symbols setting for all run types
     max_symbols = config.get('scaling', {}).get('max_symbols', None)
     symbols = load_symbols_from_csv(max_symbols=max_symbols)
     if not symbols:
-        print("Error: Could not load symbols from watchlist_ibkr.csv")
+        print("Error: Could not load symbols from watchlist_main.csv")
         print("   Please ensure the CSV file exists with a 'Symbol' column")
         return
     
-    print(f"Loaded {len(symbols)} symbols from IBKR watchlist for processing")
+    print(f"Loaded {len(symbols)} symbols from main watchlist for processing")
     
     # Handle different tasks
     if args.task == "full":

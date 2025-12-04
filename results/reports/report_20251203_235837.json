@@ -1,0 +1,42 @@
+{
+  "report_id": "report_20251203_235837",
+  "timestamp": "20251203_235837",
+  "executive_summary": "The latest run of the forecasting platform focused on optimizing the symbol AAPL through a weekend HPO process. While the optimization was completed successfully, the overall performance metrics indicate no significant improvements, with an average performance of 0 and no models evaluated. Anomalous patterns were detected, which may require further investigation. The overall health checks passed, allowing for continued operations despite the encountered errors.",
+  "sections": [
+    {
+      "title": "Performance Overview",
+      "audience": "mixed",
+      "body_markdown": "- Total symbols processed: 1\n- Average performance: 0\n- Total models evaluated: 0\n- Anomalies detected: 1\n- Health checks: 1 total, 0 passed"
+    },
+    {
+      "title": "HPO Results",
+      "audience": "quants",
+      "body_markdown": "- HPO completed for symbol AAPL.\n- Best performing model: BaselineLinear with a best MAPE of 0.0.\n- No significant improvements were noted despite the optimization."
+    },
+    {
+      "title": "Research Insights",
+      "audience": "ops",
+      "body_markdown": "- Anomalous patterns detected that require attention.\n- Market implications analyzed with SHAP insights.\n- No significant insights from evaluation metrics."
+    }
+  ],
+  "key_risks": [
+    "No models evaluated, indicating potential issues with model training or data quality.",
+    "Anomalous patterns detected that may impact forecasting accuracy."
+  ],
+  "key_opportunities": [
+    "Further investigation into the detected anomalies could lead to improved model performance.",
+    "Optimizing additional symbols may yield better results in future runs."
+  ],
+  "actions_for_quants": [
+    "Investigate the anomalies detected and assess their impact on forecasting."
+  ],
+  "actions_for_ops": [
+    "Review the errors encountered during the run and ensure data quality for future optimizations."
+  ],
+  "performance_overview": {},
+  "risk_assessment": {},
+  "optimization_recommendations": {},
+  "research_insights": {},
+  "operational_notes": {},
+  "priority_actions": []
+}

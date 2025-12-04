@@ -1,0 +1,42 @@
+{
+  "report_id": "report_20251203_235600",
+  "timestamp": "20251203_235600",
+  "executive_summary": "The latest run of the forecasting platform focused on optimizing the symbol AAPL through a weekend HPO process. Despite the completion of optimizations, the overall performance metrics indicate no significant improvements, with an average performance of 0 and no models yielding actionable insights. An anomaly was detected that requires further investigation. The system passed no checks, indicating potential underlying issues that need to be addressed before proceeding.",
+  "sections": [
+    {
+      "title": "Performance Overview",
+      "audience": "mixed",
+      "body_markdown": "- Total symbols processed: 1\n- Average performance: 0\n- Anomalies detected: 1\n- No significant insights from evaluation metrics."
+    },
+    {
+      "title": "HPO Optimization Results",
+      "audience": "quants",
+      "body_markdown": "- HPO completed for AAPL with 1 optimization performed.\n- Best MAPE for AAPL: 0.0, but no improvement percentage recorded.\n- Next priorities for optimization are currently undefined."
+    },
+    {
+      "title": "Guardrails and Health Summary",
+      "audience": "ops",
+      "body_markdown": "- Total checks performed: 1\n- Passed checks: 0\n- Warnings: 0\n- Critical issues: None identified, but the system cannot proceed without addressing the failed checks."
+    }
+  ],
+  "key_risks": [
+    "No models evaluated successfully, indicating potential issues with the forecasting process.",
+    "The system failed all health checks, which could lead to unreliable forecasts."
+  ],
+  "key_opportunities": [
+    "The detection of an anomaly presents an opportunity for deeper analysis and potential improvements.",
+    "Optimizing AAPL may yield future benefits if the underlying issues are resolved."
+  ],
+  "actions_for_quants": [
+    "Investigate the detected anomaly to determine its impact on forecasting accuracy."
+  ],
+  "actions_for_ops": [
+    "Address the failed health checks to ensure the system can proceed with reliable forecasts."
+  ],
+  "performance_overview": {},
+  "risk_assessment": {},
+  "optimization_recommendations": {},
+  "research_insights": {},
+  "operational_notes": {},
+  "priority_actions": []
+}

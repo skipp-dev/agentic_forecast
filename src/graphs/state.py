@@ -9,14 +9,14 @@ class GraphState(TypedDict):
     symbols: List[str]
     config: Dict[str, Any]
     raw_data: Dict[str, pd.DataFrame]
-    features: Dict[str, pd.DataFrame]
+    features: Dict[str, Any] # Serialized to dict
     forecasts: Dict[str, Dict[str, pd.DataFrame]]
     
     # Analytics Outputs
     performance_summary: pd.DataFrame
-    drift_metrics: pd.DataFrame
-    risk_kpis: pd.DataFrame
-    anomalies: Dict[str, pd.DataFrame]
+    drift_metrics: Dict[str, Any] # Serialized to dict
+    risk_kpis: Dict[str, Any] # Serialized to dict
+    anomalies: Dict[str, Any] # Serialized to dict
     
     # Decision & Action Outputs
     recommended_actions: List[Dict[str, Any]]
@@ -62,3 +62,7 @@ class GraphState(TypedDict):
     
     # Trust Score
     trust_scores: Dict[str, float]
+
+    # Macro & Regime
+    macro_data: Dict[str, Any]
+    regimes: Dict[str, str]

@@ -15,7 +15,7 @@ class HPOAgent:
     """
     Hyperparameter Optimization Agent to orchestrate model training and tuning.
     """
-    def __init__(self, symbols: List[str], data_store: Dict[str, pd.DataFrame] = None, data_path: str = 'data/reference', config: Dict = None):
+    def __init__(self, symbols: List[str], data_store: Dict[str, pd.DataFrame] = None, data_path: str = 'data/reference', config: Dict = None, hpo_plan: Any = None):
         """
         Initializes the HPOAgent.
 
@@ -24,11 +24,13 @@ class HPOAgent:
             data_store (Dict[str, pd.DataFrame]): Dictionary containing data for each symbol.
             data_path (str): The path to the reference data (fallback).
             config (Dict): Configuration dictionary.
+            hpo_plan (Any): Optional HPO plan from LLM.
         """
         self.symbols = symbols
         self.data_store = data_store
         self.data_path = data_path
         self.config = config or {}
+        self.hpo_plan = hpo_plan
         self.model_zoo = ModelZoo()
         self.results: Dict[str, Dict[str, ModelTrainingResult]] = {}
         self.model_registry = ModelRegistry()
@@ -74,7 +76,17 @@ class HPOAgent:
         run_type = os.environ.get('RUN_TYPE', 'DAILY')
         logger.info(f"HPO Run Type: {run_type}")
 
-        for symbol in self.symbols:
+        # Apply Plan Filtering
+        target_symbols = self.symbols
+        if self.hpo_plan and hasattr(self.hpo_plan, 'symbols_to_focus') and self.hpo_plan.symbols_to_focus:
+            logger.info(f"Applying HPO Plan: Focusing on symbols {self.hpo_plan.symbols_to_focus}")
+            # Intersect with available symbols
+            target_symbols = [s for s in self.symbols if s in self.hpo_plan.symbols_to_focus]
+            if not target_symbols:
+                logger.warning("Plan symbols do not match any available symbols. Falling back to all.")
+                target_symbols = self.symbols
+
+        for symbol in target_symbols:
             logger.info(f"--- Processing Symbol: {symbol} ---")
             try:
                 df = self._load_data(symbol)
@@ -116,38 +128,56 @@ class HPOAgent:
                 # Get early stopping patience
                 early_stopping_patience = hpo_settings.get('early_stopping_patience', 3)
 
+                # Determine models to run
+                models_to_run = ['BaselineLinear', 'AutoDLinear', 'AutoNHITS', 'AutoTFT']
+                
+                # Plan Overrides
+                if self.hpo_plan and hasattr(self.hpo_plan, 'families_to_prioritize') and self.hpo_plan.families_to_prioritize:
+                     # Always keep BaselineLinear
+                     models_to_run = ['BaselineLinear'] + [m for m in models_to_run if m in self.hpo_plan.families_to_prioritize]
+
+                # Helper to get trials
+                def get_trials(family, default_trials, default_epochs):
+                    trials = default_trials
+                    epochs = default_epochs
+                    if self.hpo_plan and hasattr(self.hpo_plan, 'budget_allocation'):
+                        if family in self.hpo_plan.budget_allocation:
+                            trials = self.hpo_plan.budget_allocation[family]
+                            logger.info(f"Plan Override: {family} trials set to {trials}")
+                    return trials, epochs
+
                 # Small config (for lighter models)
-                small_settings = run_settings.get('small_models', {})
-                small_trials = small_settings.get('trials', 10)
-                small_epochs = small_settings.get('max_epochs', 10)
-                hpo_config_small = HPOConfig(
-                    max_trials=small_trials, 
-                    max_epochs=small_epochs,
-                    early_stopping_patience=early_stopping_patience
-                )
+                small_settings = run_settings.get('small_models', {}) if run_settings else {}
+                small_trials_def = small_settings.get('trials', 10)
+                small_epochs_def = small_settings.get('max_epochs', 10)
 
                 # Large config (for heavier models)
-                large_settings = run_settings.get('large_models', {})
-                large_trials = large_settings.get('trials', 20)
-                large_epochs = large_settings.get('max_epochs', 20)
-                hpo_config_large = HPOConfig(
-                    max_trials=large_trials, 
-                    max_epochs=large_epochs,
-                    early_stopping_patience=early_stopping_patience
-                )
+                large_settings = run_settings.get('large_models', {}) if run_settings else {}
+                large_trials_def = large_settings.get('trials', 20)
+                large_epochs_def = large_settings.get('max_epochs', 20)
 
                 # Train models
-                logger.info(f"Training BaselineLinear for {symbol}...")
-                self.results[symbol]['BaselineLinear'] = self.model_zoo.train_baseline_linear(data_spec)
+                if 'BaselineLinear' in models_to_run:
+                    logger.info(f"Training BaselineLinear for {symbol}...")
+                    self.results[symbol]['BaselineLinear'] = self.model_zoo.train_baseline_linear(data_spec)
 
-                logger.info(f"Training AutoDLinear for {symbol} (trials={small_trials}, epochs={small_epochs})...")
-                self.results[symbol]['AutoDLinear'] = self.model_zoo.train_autodlinear(data_spec, hpo_config_small)
+                if 'AutoDLinear' in models_to_run:
+                    trials, epochs = get_trials('AutoDLinear', small_trials_def, small_epochs_def)
+                    hpo_config = HPOConfig(max_trials=trials, max_epochs=epochs, early_stopping_patience=early_stopping_patience)
+                    logger.info(f"Training AutoDLinear for {symbol} (trials={trials}, epochs={epochs})...")
+                    self.results[symbol]['AutoDLinear'] = self.model_zoo.train_autodlinear(data_spec, hpo_config)
 
-                logger.info(f"Training AutoNHITS for {symbol} (trials={small_trials}, epochs={small_epochs})...")
-                self.results[symbol]['AutoNHITS'] = self.model_zoo.train_autonhits(data_spec, hpo_config_small)
+                if 'AutoNHITS' in models_to_run:
+                    trials, epochs = get_trials('AutoNHITS', small_trials_def, small_epochs_def)
+                    hpo_config = HPOConfig(max_trials=trials, max_epochs=epochs, early_stopping_patience=early_stopping_patience)
+                    logger.info(f"Training AutoNHITS for {symbol} (trials={trials}, epochs={epochs})...")
+                    self.results[symbol]['AutoNHITS'] = self.model_zoo.train_autonhits(data_spec, hpo_config)
 
-                logger.info(f"Training AutoTFT for {symbol} (trials={large_trials}, epochs={large_epochs})...")
-                self.results[symbol]['AutoTFT'] = self.model_zoo.train_autotft(data_spec, hpo_config_large)
+                if 'AutoTFT' in models_to_run:
+                    trials, epochs = get_trials('AutoTFT', large_trials_def, large_epochs_def)
+                    hpo_config = HPOConfig(max_trials=trials, max_epochs=epochs, early_stopping_patience=early_stopping_patience)
+                    logger.info(f"Training AutoTFT for {symbol} (trials={trials}, epochs={epochs})...")
+                    self.results[symbol]['AutoTFT'] = self.model_zoo.train_autotft(data_spec, hpo_config)
 
             except Exception as e:
                 logger.error(f"Error processing symbol {symbol}: {e}", exc_info=True)

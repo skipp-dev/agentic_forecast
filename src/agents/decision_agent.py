@@ -353,9 +353,9 @@ class DecisionAgent:
                 'confidence': confidence
             }
 
-    def get_trading_decision(self, symbol: str, trust_score: float, forecast_confidence: str = 'low') -> Dict[str, any]:
+    def get_trading_decision(self, symbol: str, trust_score: float, forecast_confidence: str = 'low', regimes: Optional[Dict[str, str]] = None) -> Dict[str, any]:
         """
-        Determine trading permissions and sizing based on trust score.
+        Determine trading permissions and sizing based on trust score and market regimes.
         
         Trust Score Ranges:
         - 0.0 - 0.3: Do not auto-trade
@@ -389,5 +389,27 @@ class DecisionAgent:
         if forecast_confidence == 'low' and decision['position_size_multiplier'] > 0.5:
             decision['position_size_multiplier'] = 0.5
             decision['reason'] += " (Capped due to low forecast confidence)"
+
+        # Regime-based adjustments
+        if regimes and decision['auto_trade_allowed']:
+            # High Rates Regime
+            if regimes.get('rate_regime') == 'high_rates':
+                decision['position_size_multiplier'] *= 0.8
+                decision['reason'] += " (Reduced 20% due to High Rates regime)"
+            
+            # Oil Spike Regime
+            if regimes.get('oil_regime') == 'spike':
+                decision['position_size_multiplier'] *= 0.7
+                decision['reason'] += " (Reduced 30% due to Oil Spike regime)"
+                
+            # Gold Rally (Risk-off signal)
+            if regimes.get('gold_regime') == 'rally':
+                decision['position_size_multiplier'] *= 0.9
+                decision['reason'] += " (Reduced 10% due to Gold Rally/Risk-off)"
+                
+            # Seasonal Sell-off
+            if regimes.get('seasonal_regime') == 'sell_in_may':
+                decision['position_size_multiplier'] *= 0.8
+                decision['reason'] += " (Reduced 20% due to Seasonal weakness)"
             
         return decision

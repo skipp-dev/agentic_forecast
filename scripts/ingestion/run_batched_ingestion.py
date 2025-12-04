@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Batched ingestion runner
-Processes symbols from `watchlist_ibkr.csv` in configurable batches and
+Processes symbols from `watchlist_main.csv` in configurable batches and
 saves processed data to `data/processed/batched/`. Writes simple ingestion
 metrics to SQLite MetricsDatabase.
 """
@@ -14,7 +14,7 @@ sys.path.append(os.path.dirname(__file__))
 from src.data.unified_ingestion_v2 import UnifiedDataIngestion
 from data.metrics_database import MetricsDatabase
 
-WATCHLIST = 'watchlist_ibkr.csv'
+WATCHLIST = 'watchlist_main.csv'
 OUTPUT_DIR = 'data/processed/batched'
 
 BATCH_SIZE = int(os.environ.get('BATCH_SIZE', '50'))

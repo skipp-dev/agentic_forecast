@@ -11,8 +11,24 @@ drift:
   min_accuracy: 0.70
   actions:
     - type: retrain
-    - type: rollback_if_val_drop_gt: 0.05
+    - type: rollback_if_val_drop_gt
+      threshold: 0.05
 observability:
   tracing: langsmith
   require_trace: true
   eval_suites: ["regression_eval_v1"]
+trust_score:
+  weights:
+    accuracy: 0.4
+    regime: 0.3
+    guardrails: 0.2
+    data_quality: 0.1
+  thresholds:
+    mape_good: 0.05
+    mape_bad: 0.15
+    volatility_high: 0.5
+    volatility_medium: 0.3
+  penalties:
+    guardrail_flag: 0.2
+    regime_high_vol: 0.2
+    regime_medium_vol: 0.5

@@ -1,10 +1,11 @@
 import pandas as pd
 import numpy as np
 from typing import Dict, List, Any, Optional
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import logging
 import json
 from langsmith import traceable
+from src.utils.llm_utils import extract_json_from_llm_output
 
 logger = logging.getLogger(__name__)
 
@@ -12,7 +13,7 @@ class AnalyticsAgent:
     """
     Agent for performing analytics on model forecasts.
     """
-
+    # ... (existing code for calculate_performance_summary) ...
     def calculate_performance_summary(
         self, 
         forecasts: Dict[str, Dict[str, pd.DataFrame]], 
@@ -90,14 +91,34 @@ class AnalyticsRecommendation:
     actions: List[Dict[str, Any]]
     notes_for_humans: str
 
+@dataclass
+class MetricExplanations:
+    mae: str = ""
+    mape: str = ""
+    smape: str = ""
+    swase: str = ""
+    directional_accuracy: str = ""
+
+@dataclass
+class AnalyticsExplanation:
+    global_summary: str
+    metric_explanations: MetricExplanations
+    regime_insights: List[Any] = field(default_factory=list)
+    symbol_outliers: List[Any] = field(default_factory=list)
+    feature_insights: Dict[str, Any] = field(default_factory=lambda: {"overall_top_features": [], "shock_regime_top_features": []})
+    recommendations: List[Any] = field(default_factory=list)
+
 class LLMAnalyticsExplainerAgent:
     """
     Agent that uses OpenAILLMClient to explain performance metrics and drift.
     """
-    def __init__(self, settings=None):
-        # Use the new SmithLLMClient via factory
-        from src.llm.llm_factory import create_llm_for_role
-        self.llm = create_llm_for_role("analytics_explainer")
+    def __init__(self, settings=None, llm_client=None):
+        if llm_client is not None:
+            self.llm = llm_client
+        else:
+            # Use the new SmithLLMClient via factory
+            from src.llm.llm_factory import create_llm_for_role
+            self.llm = create_llm_for_role("analytics_explainer")
         self.settings = settings or {}
 
     @traceable(
@@ -105,7 +126,7 @@ class LLMAnalyticsExplainerAgent:
         tags=["analytics", "llm", "explainer"],
         metadata={"role": "analytics_explainer"}
     )
-    def explain_metrics(self, metrics_payload: dict) -> dict:
+    def explain_metrics(self, metrics_payload: dict) -> AnalyticsExplanation:
         """
         Explain metrics using the structured prompt and JSON output schema.
         This call is traced to LangSmith.
@@ -127,7 +148,8 @@ class LLMAnalyticsExplainerAgent:
         logger.info(f"Raw LLM response (first 500 chars): {raw[:500]}")
 
         try:
-            data = json.loads(raw)
+            json_str = extract_json_from_llm_output(raw)
+            data = json.loads(json_str)
             logger.info("Successfully parsed LLM response as JSON")
         except json.JSONDecodeError as e:
             logger.warning(f"LLM returned invalid JSON: {e}. Raw response: {raw}")
@@ -141,7 +163,25 @@ class LLMAnalyticsExplainerAgent:
                 "recommendations": [],
             }
 
-        return data
+        # Filter and validate
+        valid_keys = AnalyticsExplanation.__annotations__.keys()
+        filtered = {k: v for k, v in data.items() if k in valid_keys}
+        
+        # Handle nested dataclass
+        metric_explanations_data = filtered.get("metric_explanations", {})
+        if isinstance(metric_explanations_data, dict):
+             filtered["metric_explanations"] = MetricExplanations(**{
+                 k: v for k, v in metric_explanations_data.items() 
+                 if k in MetricExplanations.__annotations__
+             })
+        else:
+             filtered["metric_explanations"] = MetricExplanations()
+
+        # Ensure required fields (dataclass defaults handle optional ones, but global_summary is required)
+        if "global_summary" not in filtered:
+            filtered["global_summary"] = "Analysis completed (summary missing)"
+
+        return AnalyticsExplanation(**filtered)
 
     def analyze(self, analytics_input: AnalyticsInput) -> AnalyticsRecommendation:
         """
@@ -152,13 +192,15 @@ class LLMAnalyticsExplainerAgent:
         metrics_payload = self._convert_to_metrics_payload(analytics_input)
 
         # Use new method
-        explanation_data = self.explain_metrics(metrics_payload)
+        explanation = self.explain_metrics(metrics_payload)
 
         # Convert back to old AnalyticsRecommendation format for compatibility
+        # We serialize the whole explanation object to JSON for the notes
+        import dataclasses
         return AnalyticsRecommendation(
-            summary_text=explanation_data.get("global_summary", "Analysis completed"),
-            actions=explanation_data.get("recommendations", []),
-            notes_for_humans=json.dumps(explanation_data, indent=2)
+            summary_text=explanation.global_summary,
+            actions=explanation.recommendations,
+            notes_for_humans=json.dumps(dataclasses.asdict(explanation), indent=2, default=str)
         )
 
     def _convert_to_metrics_payload(self, analytics_input: AnalyticsInput) -> dict:

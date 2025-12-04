@@ -1,0 +1,11 @@
+{
+  "report_id": "report_20251203_173118",
+  "timestamp": "20251203_173118",
+  "executive_summary": "The latest run of the forecasting platform processed 576 symbols with a total of 340 models trained. Despite the high volume of processing, the average performance metrics indicate no significant improvements, with an average MAPE of 0. Key anomalies were detected, requiring further investigation. The HPO process was completed successfully, optimizing 339 symbols, though no top performers were identified. Overall, the system is operational but faces critical issues that need addressing.",
+  "performance_overview": {},
+  "risk_assessment": {},
+  "optimization_recommendations": {},
+  "research_insights": {},
+  "operational_notes": {},
+  "priority_actions": []
+}

@@ -7,6 +7,7 @@ import os
 import sys
 import yaml
 import pandas as pd
+import asyncio
 from datetime import datetime, timedelta
 
 # Add src to path
@@ -18,7 +19,7 @@ from src.nodes.execution_nodes import forecasting_node
 from src.nodes.agent_nodes import analytics_agent_node
 from src.graphs.state import GraphState
 
-def main():
+async def main():
     print("🚀 Starting manual IB Forecast pipeline test...")
 
     # Load config
@@ -31,8 +32,9 @@ def main():
 
     # Initialize data ingestion
     print("--- Loading Data ---")
-    data_ingestion = UnifiedDataIngestion(use_real_data=True, config=config)
-    data_ingestion.initialize()
+    data_ingestion = UnifiedDataIngestion(use_real_data=True)
+    await data_ingestion.initialize()
+
 
     # Load raw data
     raw_data = {}
@@ -41,7 +43,7 @@ def main():
 
     for symbol in symbols:
         print(f"Loading {symbol}...")
-        data = data_ingestion.get_historical_data(symbol, start_date, end_date, '1 day')
+        data = await data_ingestion.get_historical_data(symbol, start_date, end_date, '1 day')
         if data is not None and not data.empty:
             raw_data[symbol] = data
             print(f"✅ Loaded {len(data)} rows for {symbol}")
@@ -49,6 +51,8 @@ def main():
             print(f"❌ Failed to load {symbol}")
 
     print(f"Loaded data for {len(raw_data)} symbols")
+    
+    await data_ingestion.cleanup()
 
     # Generate features
     print("\n--- Generating Features ---")
@@ -119,4 +123,4 @@ def main():
     print("\n✅ Manual pipeline test completed!")
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())

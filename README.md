@@ -22,6 +22,13 @@ The system is explicitly designed to be:
 
 > Note: IBKR/TWS is not required – current design is Alpha Vantage only.
 
+### API Limits
+
+**Alpha Vantage Premium**:
+- The system is configured for a **Premium** Alpha Vantage key with a limit of **300 calls per minute**.
+- The client includes rate limiting logic to respect this constraint.
+- If you are using a free key (5 calls/min), you must update `config.yaml` and expect significantly slower performance.
+
 ---
 
 ## 2. How to run the daily pipeline

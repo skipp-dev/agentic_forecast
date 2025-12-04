@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang='en'>
+<head>
+    <meta charset='UTF-8'>
+    <meta name='viewport' content='width=device-width, initial-scale=1.0'>
+    <title>System Forecasting Report</title>
+    <style>
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; margin: 0; padding: 20px; background-color: #f5f5f5; }
+        .container { max-width: 1200px; margin: 0 auto; background: white; padding: 30px; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+        h1 { color: #2c3e50; border-bottom: 3px solid #3498db; padding-bottom: 10px; }
+        h2 { color: #34495e; margin-top: 30px; border-left: 4px solid #3498db; padding-left: 15px; }
+        .executive-summary { background: #ecf0f1; padding: 20px; border-radius: 5px; margin: 20px 0; }
+        .section-box { background: #fff; border: 1px solid #ddd; padding: 15px; margin: 10px 0; border-radius: 5px; }
+        .risk-item { background: #fff3cd; padding: 10px; margin: 5px 0; border-radius: 3px; border-left: 4px solid #ffc107; }
+        .opp-item { background: #d4edda; padding: 10px; margin: 5px 0; border-radius: 3px; border-left: 4px solid #28a745; }
+        .action-item { background: #d1ecf1; padding: 15px; margin: 10px 0; border-radius: 5px; border-left: 4px solid #17a2b8; }
+        .timestamp { color: #6c757d; font-size: 0.9em; }
+    </style>
+</head>
+<body>
+    <div class='container'>
+        <h1>System Forecasting Report</h1>
+        <p class='timestamp'>Generated: 20251204_000212</p>
+        <h2>Executive Summary</h2>
+        <div class='executive-summary'>
+            <p>The latest run of the forecasting platform focused on optimizing the symbol AAPL through a weekend HPO process. While the optimization was completed successfully, the overall performance metrics indicate no significant results, with an average performance of 0 and no models evaluated. An anomaly was detected that requires further investigation. The health checks revealed that no checks passed, highlighting a critical area for improvement.</p>
+        </div>
+        <h2>Performance Overview</h2>
+        <p><em>Audience: mixed</em></p>
+        <div class='section-box'>
+            - Total symbols processed: 1<br>- Average performance: 0<br>- Total models evaluated: 0<br>- Anomalies detected: 1 requiring attention.
+        </div>
+        <h2>HPO Optimization Details</h2>
+        <p><em>Audience: quants</em></p>
+        <div class='section-box'>
+            - HPO completed for symbol AAPL.<br>- Best performing model: BaselineLinear with a best MAPE of 0.0.<br>- Total optimizations conducted: 1.
+        </div>
+        <h2>Health Check Summary</h2>
+        <p><em>Audience: ops</em></p>
+        <div class='section-box'>
+            - Total checks performed: 1<br>- Passed checks: 0<br>- Warnings: 0<br>- Critical issues: None identified, but can proceed with caution.
+        </div>
+        <h2>Research Insights</h2>
+        <p><em>Audience: mixed</em></p>
+        <div class='section-box'>
+            - Key finding: 1 anomalous pattern detected.<br>- Market implications analyzed with SHAP insights.<br>- No significant insights from evaluation metrics.
+        </div>
+        <h2>Key Risks</h2>
+        <div class='risk-item'>No models evaluated, indicating potential issues with the forecasting process.</div>
+        <div class='risk-item'>Health checks failed, which could lead to unreliable outputs.</div>
+        <h2>Key Opportunities</h2>
+        <div class='opp-item'>Focus on investigating the detected anomaly to improve future forecasts.</div>
+        <div class='opp-item'>Leverage insights from the HPO process to refine model selection.</div>
+        <h2>Actions for Quants</h2>
+        <div class='action-item'>Investigate the detected anomaly and assess its impact on forecasting accuracy.</div>
+        <h2>Actions for Ops</h2>
+        <div class='action-item'>Review health check processes to ensure future runs pass all checks.</div>
+    </div>
+</body>
+</html>

@@ -257,7 +257,7 @@ class LLMReportingAgent:
         Generate a comprehensive system report from aggregated inputs.
         This call is traced to LangSmith.
         """
-        from src.prompts.llm_prompts import build_reporting_agent_user_prompt
+        from src.configs.llm_prompts import build_reporting_agent_user_prompt
 
         # Build user prompt using the factory approach
         if self.factory:
@@ -273,7 +273,7 @@ class LLMReportingAgent:
             messages = self.factory.build_agent_messages('reporting_agent', user_prompt)
         else:
             # Fallback to direct prompt building
-            from src.prompts.llm_prompts import PROMPTS
+            from src.configs.llm_prompts import PROMPTS
             system_prompt = PROMPTS["reporting_agent"]
             # Enhance the input with evaluation metrics
             enhanced_input = self._enhance_input_with_evaluation_metrics(report_input)

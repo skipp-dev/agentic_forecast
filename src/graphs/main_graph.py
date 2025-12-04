@@ -11,7 +11,8 @@ from ..nodes import (
     hpo_nodes,
     ensemble_nodes,
     anomaly_detection_nodes,
-    reporting_nodes
+    reporting_nodes,
+    macro_nodes
 )
 
 def should_continue(state: GraphState) -> str:
@@ -62,6 +63,19 @@ def should_continue(state: GraphState) -> str:
         state['continuous_learning_applied'] = False
         return "continue"
 
+def check_hpo_trigger(state: GraphState) -> str:
+    """
+    Checks if HPO was triggered by the decision agent and if we haven't exceeded limits.
+    """
+    if state.get('hpo_triggered'):
+        # Check loop limits
+        hpo_results = state.get('hpo_results', {})
+        max_hpo_attempts = 1
+        if len(hpo_results) < max_hpo_attempts:
+             print("🔄 Decision Agent triggered HPO loop")
+             return "hpo"
+    return "continue"
+
 def create_main_graph(config: dict):
     """
     Creates the main forecasting graph.
@@ -71,9 +85,12 @@ def create_main_graph(config: dict):
     # Partially apply the config to the nodes that need it
     decision_agent_node_with_config = partial(agent_nodes.decision_agent_node, config=config)
     guardrail_agent_node_with_config = partial(agent_nodes.guardrail_agent_node, config=config)
+    portfolio_manager_node_with_config = partial(agent_nodes.portfolio_manager_node, config=config)
 
     # Add nodes
     graph.add_node("load_data", data_nodes.load_data_node)
+    graph.add_node("macro_data", macro_nodes.macro_data_node)
+    graph.add_node("detect_regimes", macro_nodes.regime_detection_node)
     graph.add_node("news_data", agent_nodes.news_data_node)
     graph.add_node("enrich_news", agent_nodes.llm_news_enrichment_node)
     graph.add_node("construct_graph", agent_nodes.graph_construction_node)
@@ -92,13 +109,16 @@ def create_main_graph(config: dict):
     graph.add_node("make_decisions", decision_agent_node_with_config)
     graph.add_node("apply_guardrails", guardrail_agent_node_with_config)
     graph.add_node("execute_actions", execution_nodes.action_executor_node)
+    graph.add_node("construct_portfolio", portfolio_manager_node_with_config)
     # graph.add_node("run_explainability", agent_nodes.explainability_agent_node)
     graph.add_node("generate_report", reporting_nodes.generate_report_node)
     graph.add_node("auto_documentation", agent_nodes.auto_documentation_node)
 
     # Define edges
     graph.set_entry_point("load_data")
-    graph.add_edge("load_data", "news_data")
+    graph.add_edge("load_data", "macro_data")
+    graph.add_edge("macro_data", "detect_regimes")
+    graph.add_edge("detect_regimes", "news_data")
     graph.add_edge("news_data", "enrich_news")
     graph.add_edge("enrich_news", "construct_graph")
     graph.add_edge("construct_graph", "detect_drift")
@@ -126,11 +146,21 @@ def create_main_graph(config: dict):
     graph.add_edge("run_analytics", "llm_analytics")
     graph.add_edge("llm_analytics", "interpret_forecasts")
     graph.add_edge("interpret_forecasts", "make_decisions")
-    graph.add_edge("make_decisions", "apply_guardrails")
+    
+    graph.add_conditional_edges(
+        "make_decisions",
+        check_hpo_trigger,
+        {
+            "continue": "apply_guardrails",
+            "hpo": "llm_hpo_planning"
+        }
+    )
+    
     # graph.add_edge("apply_guardrails", "run_explainability")
     # graph.add_edge("run_explainability", "execute_actions")
     graph.add_edge("apply_guardrails", "execute_actions")
-    graph.add_edge("execute_actions", "generate_report")
+    graph.add_edge("execute_actions", "construct_portfolio")
+    graph.add_edge("construct_portfolio", "generate_report")
     graph.add_edge("generate_report", "auto_documentation")
     graph.add_edge("auto_documentation", END)
 

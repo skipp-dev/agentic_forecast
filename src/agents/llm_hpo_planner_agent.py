@@ -1,8 +1,13 @@
-from typing import List, Dict, Any
-from dataclasses import dataclass
+from typing import List, Dict, Any, Optional
+from dataclasses import dataclass, field
 import logging
 import json
-import re
+from src.utils.llm_utils import extract_json_from_llm_output
+from src.configs.llm_prompts import (
+    get_prompt, 
+    build_hpo_planner_user_prompt, 
+    build_llm_messages
+)
 
 logger = logging.getLogger(__name__)
 
@@ -24,80 +29,70 @@ class HPOPlanInput:
     per_family_max_trials: int
 
 @dataclass
-class HPOJob:
-    model_family: str
-    priority: str
-    n_trials: int
-    search_space: Dict[str, Any]
-    notes: str
-
-@dataclass
 class HPOPlan:
-    jobs: List[HPOJob]
-    global_notes: str
+    symbols_to_focus: List[str] = field(default_factory=list)
+    horizons_to_focus: List[int] = field(default_factory=list)
+    families_to_prioritize: List[str] = field(default_factory=list)
+    per_family_search_spaces: Dict[str, Any] = field(default_factory=dict)
+    budget_allocation: Dict[str, int] = field(default_factory=dict)
+    symbol_family_overrides: List[Dict[str, Any]] = field(default_factory=list)
+    notes: str = ""
 
 class LLMHPOPlannerAgent:
     """
     Agent that plans HPO runs using an LLM.
     """
-    def __init__(self, llm_client):
+    def __init__(self, llm_client: Any):
+        """
+        Initialize the HPO Planner Agent.
+        
+        Args:
+            llm_client: Client for LLM interactions (must support .generate(messages, ...))
+        """
         self.llm = llm_client
-        from src.prompts.llm_prompts import get_prompt
-        self.get_prompt = get_prompt
 
     def plan(self, plan_input: HPOPlanInput) -> HPOPlan:
         """
-        Generate an HPO plan.
+        Generate an HPO plan based on past performance and budget constraints.
         """
-        # Prepare data
-        past_runs_json = str([r.__dict__ for r in plan_input.past_runs])
-        perf_rows_json = str(plan_input.performance_summary[:50])
+        # Prepare data for the prompt
+        # Convert dataclasses to dicts for JSON serialization
+        past_runs_dicts = [r.__dict__ for r in plan_input.past_runs]
         
-        prompt = self.get_prompt(
-            "hpo_budget_planning",
+        # Build the prompts
+        system_prompt = get_prompt("hpo_planner")
+        user_prompt = build_hpo_planner_user_prompt(
+            past_hpo_runs=past_runs_dicts,
+            family_performance=plan_input.performance_summary,
             total_trials=plan_input.total_hpo_budget,
             min_trials=plan_input.per_family_min_trials,
-            max_trials=plan_input.per_family_max_trials,
-            family_performance_json=perf_rows_json
+            max_trials=plan_input.per_family_max_trials
         )
         
-        logger.info("Generating HPO plan")
-        response = self.llm.generate(prompt, temperature=0.2)
+        messages = build_llm_messages(system_prompt, user_prompt)
         
+        logger.info("Generating HPO plan with LLM")
         try:
-            # Extract JSON from code block if present
-            json_match = re.search(r'```json\s*(.*?)\s*```', response, re.DOTALL)
-            if json_match:
-                json_str = json_match.group(1)
-            else:
-                # Try to find the first { and last }
-                start = response.find('{')
-                end = response.rfind('}')
-                if start != -1 and end != -1:
-                    json_str = response[start:end+1]
-                else:
-                    json_str = response
-                
+            response = self.llm.generate(messages, temperature=0.2)
+            
+            json_str = extract_json_from_llm_output(response)
             data = json.loads(json_str)
             
-            jobs = []
-            for job_data in data.get('jobs', []):
-                jobs.append(HPOJob(
-                    model_family=job_data.get('model_family', 'Unknown'),
-                    priority=job_data.get('priority', 'medium'),
-                    n_trials=job_data.get('n_trials', 0),
-                    search_space=job_data.get('search_space', {}),
-                    notes=job_data.get('notes', '')
-                ))
-                
-            return HPOPlan(
-                jobs=jobs,
-                global_notes=data.get('global_notes', '')
-            )
+            # Filter and validate keys against the dataclass
+            valid_keys = HPOPlan.__annotations__.keys()
+            filtered = {k: v for k, v in data.items() if k in valid_keys}
+            
+            return HPOPlan(**filtered)
             
         except Exception as e:
-            logger.error(f"Failed to parse LLM HPO plan: {e}")
+            logger.error(f"Failed to generate or parse LLM HPO plan: {e}")
+            # Return safe fallback plan
             return HPOPlan(
-                jobs=[],
-                global_notes=f"Failed to parse plan. Raw response: {response}"
+                symbols_to_focus=[],
+                horizons_to_focus=[],
+                families_to_prioritize=[],
+                per_family_search_spaces={},
+                budget_allocation={},
+                symbol_family_overrides=[],
+                notes=f"Failed to parse plan. Error: {str(e)}"
             )

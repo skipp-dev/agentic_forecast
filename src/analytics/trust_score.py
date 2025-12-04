@@ -13,18 +13,30 @@ class TrustScoreCalculator:
     4. Data Quality / Sanity
     """
     
-    def __init__(self):
+    def __init__(self, config: Dict[str, Any] = None):
+        config = config or {}
+        
         # Weights for different components
-        self.weights = {
+        self.weights = config.get('weights', {
             'accuracy': 0.4,
             'regime': 0.3,
             'guardrails': 0.2,
             'data_quality': 0.1
-        }
+        })
         
         # Thresholds
-        self.mape_threshold_good = 0.05
-        self.mape_threshold_bad = 0.15
+        thresholds = config.get('thresholds', {})
+        self.mape_threshold_good = thresholds.get('mape_good', 0.05)
+        self.mape_threshold_bad = thresholds.get('mape_bad', 0.15)
+        self.volatility_high = thresholds.get('volatility_high', 0.5)
+        self.volatility_medium = thresholds.get('volatility_medium', 0.3)
+        
+        # Penalties
+        self.penalties = config.get('penalties', {
+            'guardrail_flag': 0.2,
+            'regime_high_vol': 0.2,
+            'regime_medium_vol': 0.5
+        })
         
     def calculate_trust_scores(self, 
                              performance_summary: pd.DataFrame,
@@ -100,7 +112,7 @@ class TrustScoreCalculator:
         """
         Calculate score based on market regime.
         Normal -> 1.0
-        High Volatility / Shock -> 0.0 - 0.5
+        High Volatility / Shock -> Penalized
         """
         if symbol not in risk_kpis:
             return 0.5 # Default
@@ -109,11 +121,10 @@ class TrustScoreCalculator:
         volatility = kpis.get('volatility', 0.0)
         
         # Assuming volatility is annualized std dev. 
-        # > 50% vol is high risk.
-        if volatility > 0.5:
-            return 0.2
-        elif volatility > 0.3:
-            return 0.5
+        if volatility > self.volatility_high:
+            return self.penalties.get('regime_high_vol', 0.2)
+        elif volatility > self.volatility_medium:
+            return self.penalties.get('regime_medium_vol', 0.5)
         else:
             return 1.0
 
@@ -129,8 +140,8 @@ class TrustScoreCalculator:
         if not symbol_flags:
             return 1.0
             
-        # Simple penalty: 0.2 per flag
-        penalty = len(symbol_flags) * 0.2
+        # Penalty per flag
+        penalty = len(symbol_flags) * self.penalties.get('guardrail_flag', 0.2)
         return max(0.0, 1.0 - penalty)
 
     def _calculate_data_score(self, symbol: str, drift_metrics: Dict[str, Any]) -> float:

@@ -1,11 +1,12 @@
 from typing import Dict, Any, Optional, List
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import logging
 import json
 import os
 from datetime import datetime
 from pathlib import Path
 from langsmith import traceable
+from src.utils.llm_utils import extract_json_from_llm_output
 
 logger = logging.getLogger(__name__)
 
@@ -18,14 +19,28 @@ class ReportingInput:
     run_metadata: Dict[str, Any]
 
 @dataclass
+class ReportSection:
+    title: str
+    audience: str   # "quants" | "ops" | "management" | "mixed"
+    body_markdown: str
+
+@dataclass
 class SystemReport:
+    # === New schema (matches current LLM prompt) ===
     executive_summary: str
-    performance_overview: Dict[str, Any]
-    risk_assessment: Dict[str, Any]
-    optimization_recommendations: Dict[str, Any]
-    research_insights: Dict[str, Any]
-    operational_notes: Dict[str, Any]
-    priority_actions: list
+    sections: List[ReportSection] = field(default_factory=list)
+    key_risks: List[str] = field(default_factory=list)
+    key_opportunities: List[str] = field(default_factory=list)
+    actions_for_quants: List[str] = field(default_factory=list)
+    actions_for_ops: List[str] = field(default_factory=list)
+
+    # === Legacy fields (kept for compatibility; usually empty) ===
+    performance_overview: Dict[str, Any] = field(default_factory=dict)
+    risk_assessment: Dict[str, Any] = field(default_factory=dict)
+    optimization_recommendations: Dict[str, Any] = field(default_factory=dict)
+    research_insights: Dict[str, Any] = field(default_factory=dict)
+    operational_notes: Dict[str, Any] = field(default_factory=dict)
+    priority_actions: List[str] = field(default_factory=list)
 
 class LLMReportingAgent:
     """
@@ -314,63 +329,69 @@ class LLMReportingAgent:
             raise
 
         try:
-            data = json.loads(raw)
+            json_str = extract_json_from_llm_output(raw)
+            data = json.loads(json_str)
             logger.info("Successfully parsed LLM response as JSON")
-            
-            # Filter out keys that are not in SystemReport fields
-            valid_keys = SystemReport.__annotations__.keys()
-            filtered_data = {k: v for k, v in data.items() if k in valid_keys}
-            
-            # Ensure all required keys are present
-            required_keys = set(valid_keys)
-            missing_keys = required_keys - set(filtered_data.keys())
-            if missing_keys:
-                logger.warning(f"LLM response missing keys: {missing_keys}. Filling with defaults.")
-                for key in missing_keys:
-                    if key == 'priority_actions':
-                        filtered_data[key] = []
-                    elif key == 'executive_summary':
-                        filtered_data[key] = "Executive summary missing."
-                    else:
-                        filtered_data[key] = {}
-            
-            data = filtered_data
-            
         except json.JSONDecodeError as e:
             logger.warning(f"LLM returned invalid JSON: {e}. Raw response: {raw}")
-            # Fallback: wrap the raw text if model messed up
-            data = {
-                "executive_summary": raw,
-                "performance_overview": {
-                    "global_metrics": "Unable to parse structured data",
-                    "symbol_performance": "Unable to parse structured data",
-                    "regime_performance": "Unable to parse structured data",
-                    "horizon_analysis": "Unable to parse structured data"
-                },
-                "risk_assessment": {
-                    "current_risks": ["Unable to parse structured data"],
-                    "guardrail_status": "Unable to parse structured data",
-                    "uncertainty_sources": ["Unable to parse structured data"]
-                },
-                "optimization_recommendations": {
-                    "hpo_priorities": "Unable to parse structured data",
-                    "model_improvements": "Unable to parse structured data",
-                    "feature_engineering": "Unable to parse structured data"
-                },
-                "research_insights": {
-                    "key_findings": ["Unable to parse structured data"],
-                    "market_implications": "Unable to parse structured data",
-                    "data_suggestions": "Unable to parse structured data"
-                },
-                "operational_notes": {
-                    "system_health": "Unable to parse structured data",
-                    "data_quality": "Unable to parse structured data",
-                    "maintenance_needs": "Unable to parse structured data"
-                },
-                "priority_actions": []
-            }
+            # Fallback: everything goes into executive_summary
+            return SystemReport(
+                executive_summary=raw,
+                sections=[],
+                key_risks=["Unable to parse structured data"],
+                key_opportunities=[],
+                actions_for_quants=[],
+                actions_for_ops=[],
+                performance_overview={"error": "Unable to parse structured data"},
+                risk_assessment={"error": "Unable to parse structured data"},
+                optimization_recommendations={"error": "Unable to parse structured data"},
+                research_insights={"error": "Unable to parse structured data"},
+                operational_notes={"error": "Unable to parse structured data"},
+                priority_actions=[],
+            )
 
-        return SystemReport(**data)
+        # Filter only known top-level keys (from SystemReport)
+        valid_keys = SystemReport.__annotations__.keys()
+        filtered: Dict[str, Any] = {k: v for k, v in data.items() if k in valid_keys}
+
+        required_keys = set(valid_keys)
+        missing_keys = required_keys - set(filtered.keys())
+        if missing_keys:
+            logger.warning(f"LLM response missing keys: {missing_keys}. Filling with defaults.")
+
+        # --- New-schema defaults ---
+        if "executive_summary" not in filtered:
+            filtered["executive_summary"] = "Executive summary missing."
+
+        filtered.setdefault("sections", [])
+        filtered.setdefault("key_risks", [])
+        filtered.setdefault("key_opportunities", [])
+        filtered.setdefault("actions_for_quants", [])
+        filtered.setdefault("actions_for_ops", [])
+
+        # --- Legacy fields defaults (kept empty unless LLM ever adds them) ---
+        filtered.setdefault("performance_overview", {})
+        filtered.setdefault("risk_assessment", {})
+        filtered.setdefault("optimization_recommendations", {})
+        filtered.setdefault("research_insights", {})
+        filtered.setdefault("operational_notes", {})
+        filtered.setdefault("priority_actions", [])
+
+        # Normalize sections into ReportSection instances
+        sections_raw = filtered.get("sections", [])
+        normalized_sections: List[ReportSection] = []
+        for s in sections_raw:
+            if not isinstance(s, dict):
+                continue
+            title = s.get("title") or "Untitled"
+            audience = s.get("audience") or "mixed"
+            body = s.get("body_markdown") or ""
+            normalized_sections.append(ReportSection(title=title,
+                                                     audience=audience,
+                                                     body_markdown=body))
+        filtered["sections"] = normalized_sections
+
+        return SystemReport(**filtered)
 
     def generate_and_store_report(self, report_input: ReportingInput) -> Dict[str, Any]:
         """
@@ -436,10 +457,22 @@ class LLMReportingAgent:
         json_path = self.reports_dir / f"{report_id}.json"
 
         # Convert dataclass to dict for JSON serialization
+        # Handle ReportSection objects
+        sections_dict = [
+            {'title': s.title, 'audience': s.audience, 'body_markdown': s.body_markdown}
+            for s in report.sections
+        ]
+
         report_dict = {
             'report_id': report_id,
             'timestamp': timestamp,
             'executive_summary': report.executive_summary,
+            'sections': sections_dict,
+            'key_risks': report.key_risks,
+            'key_opportunities': report.key_opportunities,
+            'actions_for_quants': report.actions_for_quants,
+            'actions_for_ops': report.actions_for_ops,
+            # Legacy fields
             'performance_overview': report.performance_overview,
             'risk_assessment': report.risk_assessment,
             'optimization_recommendations': report.optimization_recommendations,
@@ -596,64 +629,62 @@ class LLMReportingAgent:
         md.append(report.executive_summary)
         md.append("")
 
-        # Performance Overview
-        md.append("## Performance Overview")
-        perf = report.performance_overview
-        md.append(f"**Global Metrics:** {perf.get('global_metrics', 'N/A')}")
-        md.append(f"**Symbol Performance:** {perf.get('symbol_performance', 'N/A')}")
-        md.append(f"**Regime Performance:** {perf.get('regime_performance', 'N/A')}")
-        md.append(f"**Horizon Analysis:** {perf.get('horizon_analysis', 'N/A')}")
-        md.append("")
+        # New Schema Sections
+        if report.sections:
+            for section in report.sections:
+                md.append(f"## {section.title}")
+                md.append(f"*(Audience: {section.audience})*")
+                md.append(section.body_markdown)
+                md.append("")
 
-        # Risk Assessment
-        md.append("## Risk Assessment")
-        risk = report.risk_assessment
-        md.append("**Current Risks:**")
-        for risk_item in risk.get('current_risks', []):
-            md.append(f"- {risk_item}")
-        md.append("")
-        md.append(f"**Guardrail Status:** {risk.get('guardrail_status', 'N/A')}")
-        md.append("")
-        md.append("**Uncertainty Sources:**")
-        for uncertainty in risk.get('uncertainty_sources', []):
-            md.append(f"- {uncertainty}")
-        md.append("")
+        if report.key_risks:
+            md.append("## Key Risks")
+            for risk in report.key_risks:
+                md.append(f"- {risk}")
+            md.append("")
 
-        # Optimization Recommendations
-        md.append("## Optimization Recommendations")
-        opt = report.optimization_recommendations
-        md.append(f"**HPO Priorities:** {opt.get('hpo_priorities', 'N/A')}")
-        md.append(f"**Model Improvements:** {opt.get('model_improvements', 'N/A')}")
-        md.append(f"**Feature Engineering:** {opt.get('feature_engineering', 'N/A')}")
-        md.append("")
+        if report.key_opportunities:
+            md.append("## Key Opportunities")
+            for opp in report.key_opportunities:
+                md.append(f"- {opp}")
+            md.append("")
 
-        # Research Insights
-        md.append("## Research Insights")
-        research = report.research_insights
-        md.append("**Key Findings:**")
-        for finding in research.get('key_findings', []):
-            md.append(f"- {finding}")
-        md.append("")
-        md.append(f"**Market Implications:** {research.get('market_implications', 'N/A')}")
-        md.append(f"**Data Suggestions:** {research.get('data_suggestions', 'N/A')}")
-        md.append("")
+        if report.actions_for_quants:
+            md.append("## Actions for Quants")
+            for action in report.actions_for_quants:
+                md.append(f"- {action}")
+            md.append("")
 
-        # Operational Notes
-        md.append("## Operational Notes")
-        ops = report.operational_notes
-        md.append(f"**System Health:** {ops.get('system_health', 'N/A')}")
-        md.append(f"**Data Quality:** {ops.get('data_quality', 'N/A')}")
-        md.append(f"**Maintenance Needs:** {ops.get('maintenance_needs', 'N/A')}")
-        md.append("")
+        if report.actions_for_ops:
+            md.append("## Actions for Ops")
+            for action in report.actions_for_ops:
+                md.append(f"- {action}")
+            md.append("")
 
-        # Priority Actions
-        md.append("## Priority Actions")
-        for action in report.priority_actions:
-            md.append(f"### {action.get('action', 'Unknown Action')}")
-            md.append(f"- **Priority:** {action.get('priority', 'Unknown')}")
-            md.append(f"- **Timeline:** {action.get('timeline', 'Unknown')}")
-            md.append(f"- **Owner:** {action.get('owner', 'Unknown')}")
-            md.append(f"- **Rationale:** {action.get('rationale', 'Unknown')}")
+        # Legacy Fields (Fallback)
+        if report.performance_overview:
+            md.append("## Performance Overview (Legacy)")
+            perf = report.performance_overview
+            md.append(f"**Global Metrics:** {perf.get('global_metrics', 'N/A')}")
+            md.append(f"**Symbol Performance:** {perf.get('symbol_performance', 'N/A')}")
+            md.append("")
+
+        if report.risk_assessment:
+            md.append("## Risk Assessment (Legacy)")
+            risk = report.risk_assessment
+            md.append("**Current Risks:**")
+            for risk_item in risk.get('current_risks', []):
+                md.append(f"- {risk_item}")
+            md.append("")
+
+        if report.priority_actions:
+            md.append("## Priority Actions (Legacy)")
+            for action in report.priority_actions:
+                if isinstance(action, dict):
+                    md.append(f"### {action.get('action', 'Unknown Action')}")
+                    md.append(f"- **Priority:** {action.get('priority', 'Unknown')}")
+                else:
+                    md.append(f"- {action}")
             md.append("")
 
         return "\n".join(md)
@@ -678,12 +709,10 @@ class LLMReportingAgent:
         html.append("        h1 { color: #2c3e50; border-bottom: 3px solid #3498db; padding-bottom: 10px; }")
         html.append("        h2 { color: #34495e; margin-top: 30px; border-left: 4px solid #3498db; padding-left: 15px; }")
         html.append("        .executive-summary { background: #ecf0f1; padding: 20px; border-radius: 5px; margin: 20px 0; }")
-        html.append("        .metric { background: #f8f9fa; padding: 15px; margin: 10px 0; border-radius: 5px; border-left: 4px solid #28a745; }")
+        html.append("        .section-box { background: #fff; border: 1px solid #ddd; padding: 15px; margin: 10px 0; border-radius: 5px; }")
         html.append("        .risk-item { background: #fff3cd; padding: 10px; margin: 5px 0; border-radius: 3px; border-left: 4px solid #ffc107; }")
+        html.append("        .opp-item { background: #d4edda; padding: 10px; margin: 5px 0; border-radius: 3px; border-left: 4px solid #28a745; }")
         html.append("        .action-item { background: #d1ecf1; padding: 15px; margin: 10px 0; border-radius: 5px; border-left: 4px solid #17a2b8; }")
-        html.append("        .priority-high { border-left-color: #dc3545 !important; }")
-        html.append("        .priority-medium { border-left-color: #ffc107 !important; }")
-        html.append("        .priority-low { border-left-color: #28a745 !important; }")
         html.append("        .timestamp { color: #6c757d; font-size: 0.9em; }")
         html.append("    </style>")
         html.append("</head>")
@@ -700,85 +729,42 @@ class LLMReportingAgent:
         html.append(f"            <p>{report.executive_summary}</p>")
         html.append("        </div>")
 
-        # Performance Overview
-        html.append("        <h2>Performance Overview</h2>")
-        perf = report.performance_overview
-        html.append("        <div class='metric'>")
-        html.append(f"            <strong>Global Metrics:</strong> {perf.get('global_metrics', 'N/A')}")
-        html.append("        </div>")
-        html.append("        <div class='metric'>")
-        html.append(f"            <strong>Symbol Performance:</strong> {perf.get('symbol_performance', 'N/A')}")
-        html.append("        </div>")
-        html.append("        <div class='metric'>")
-        html.append(f"            <strong>Regime Performance:</strong> {perf.get('regime_performance', 'N/A')}")
-        html.append("        </div>")
-        html.append("        <div class='metric'>")
-        html.append(f"            <strong>Horizon Analysis:</strong> {perf.get('horizon_analysis', 'N/A')}")
-        html.append("        </div>")
+        # New Schema Sections
+        if report.sections:
+            for section in report.sections:
+                html.append(f"        <h2>{section.title}</h2>")
+                html.append(f"        <p><em>Audience: {section.audience}</em></p>")
+                html.append(f"        <div class='section-box'>")
+                # Simple markdown to html conversion (very basic)
+                body_html = section.body_markdown.replace('\n', '<br>')
+                html.append(f"            {body_html}")
+                html.append(f"        </div>")
 
-        # Risk Assessment
-        html.append("        <h2>Risk Assessment</h2>")
-        risk = report.risk_assessment
-        html.append("        <h3>Current Risks</h3>")
-        for risk_item in risk.get('current_risks', []):
-            html.append(f"        <div class='risk-item'>{risk_item}</div>")
-        html.append("        <div class='metric'>")
-        html.append(f"            <strong>Guardrail Status:</strong> {risk.get('guardrail_status', 'N/A')}")
-        html.append("        </div>")
-        html.append("        <h3>Uncertainty Sources</h3>")
-        for uncertainty in risk.get('uncertainty_sources', []):
-            html.append(f"        <div class='risk-item'>{uncertainty}</div>")
+        if report.key_risks:
+            html.append("        <h2>Key Risks</h2>")
+            for risk in report.key_risks:
+                html.append(f"        <div class='risk-item'>{risk}</div>")
 
-        # Optimization Recommendations
-        html.append("        <h2>Optimization Recommendations</h2>")
-        opt = report.optimization_recommendations
-        html.append("        <div class='metric'>")
-        html.append(f"            <strong>HPO Priorities:</strong> {opt.get('hpo_priorities', 'N/A')}")
-        html.append("        </div>")
-        html.append("        <div class='metric'>")
-        html.append(f"            <strong>Model Improvements:</strong> {opt.get('model_improvements', 'N/A')}")
-        html.append("        </div>")
-        html.append("        <div class='metric'>")
-        html.append(f"            <strong>Feature Engineering:</strong> {opt.get('feature_engineering', 'N/A')}")
-        html.append("        </div>")
+        if report.key_opportunities:
+            html.append("        <h2>Key Opportunities</h2>")
+            for opp in report.key_opportunities:
+                html.append(f"        <div class='opp-item'>{opp}</div>")
 
-        # Research Insights
-        html.append("        <h2>Research Insights</h2>")
-        research = report.research_insights
-        html.append("        <h3>Key Findings</h3>")
-        for finding in research.get('key_findings', []):
-            html.append(f"        <div class='metric'>{finding}</div>")
-        html.append("        <div class='metric'>")
-        html.append(f"            <strong>Market Implications:</strong> {research.get('market_implications', 'N/A')}")
-        html.append("        </div>")
-        html.append("        <div class='metric'>")
-        html.append(f"            <strong>Data Suggestions:</strong> {research.get('data_suggestions', 'N/A')}")
-        html.append("        </div>")
+        if report.actions_for_quants:
+            html.append("        <h2>Actions for Quants</h2>")
+            for action in report.actions_for_quants:
+                html.append(f"        <div class='action-item'>{action}</div>")
 
-        # Operational Notes
-        html.append("        <h2>Operational Notes</h2>")
-        ops = report.operational_notes
-        html.append("        <div class='metric'>")
-        html.append(f"            <strong>System Health:</strong> {ops.get('system_health', 'N/A')}")
-        html.append("        </div>")
-        html.append("        <div class='metric'>")
-        html.append(f"            <strong>Data Quality:</strong> {ops.get('data_quality', 'N/A')}")
-        html.append("        </div>")
-        html.append("        <div class='metric'>")
-        html.append(f"            <strong>Maintenance Needs:</strong> {ops.get('maintenance_needs', 'N/A')}")
-        html.append("        </div>")
+        if report.actions_for_ops:
+            html.append("        <h2>Actions for Ops</h2>")
+            for action in report.actions_for_ops:
+                html.append(f"        <div class='action-item'>{action}</div>")
 
-        # Priority Actions
-        html.append("        <h2>Priority Actions</h2>")
-        for action in report.priority_actions:
-            priority_class = f"priority-{action.get('priority', 'medium').lower()}"
-            html.append(f"        <div class='action-item {priority_class}'>")
-            html.append(f"            <h4>{action.get('action', 'Unknown Action')}</h4>")
-            html.append(f"            <p><strong>Priority:</strong> {action.get('priority', 'Unknown')}</p>")
-            html.append(f"            <p><strong>Timeline:</strong> {action.get('timeline', 'Unknown')}</p>")
-            html.append(f"            <p><strong>Owner:</strong> {action.get('owner', 'Unknown')}</p>")
-            html.append(f"            <p><strong>Rationale:</strong> {action.get('rationale', 'Unknown')}</p>")
-            html.append("        </div>")
+        # Legacy Fields (Fallback)
+        if report.performance_overview:
+            html.append("        <h2>Performance Overview (Legacy)</h2>")
+            perf = report.performance_overview
+            html.append(f"        <div class='section-box'>Global Metrics: {perf.get('global_metrics', 'N/A')}</div>")
 
         html.append("    </div>")
         html.append("</body>")

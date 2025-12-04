@@ -1,8 +1,9 @@
-from typing import Dict, Any, Optional
-from dataclasses import dataclass
+from typing import Dict, Any, List, Optional
+from dataclasses import dataclass, field
 import logging
 import json
 from langsmith import traceable
+from src.utils.llm_utils import extract_json_from_llm_output
 
 logger = logging.getLogger(__name__)
 
@@ -15,11 +16,12 @@ class StrategyPlanningInput:
 
 @dataclass
 class StrategyPlan:
-    strategy_rankings: list
+    strategy_rankings: List[Dict[str, Any]]
     portfolio_recommendations: Dict[str, Any]
-    regime_specific_notes: list
-    tactical_adjustments: list
-    experiments_to_run: list
+    regime_specific_notes: List[Dict[str, Any]]
+    tactical_adjustments: List[Dict[str, Any]]
+    risk_considerations: Dict[str, Any]
+    experiments_to_run: List[str]
     implementation_considerations: Dict[str, Any]
 
 class LLMStrategyPlannerAgent:
@@ -27,10 +29,13 @@ class LLMStrategyPlannerAgent:
     Agent that provides strategic recommendations for portfolio construction and strategy allocation.
     Maintains advisory-only posture - recommendations, not commands.
     """
-    def __init__(self, settings=None):
-        # Use the new LLM factory
-        from src.llm.llm_factory import create_strategy_planner_llm
-        self.llm = create_strategy_planner_llm()
+    def __init__(self, settings=None, llm_client=None):
+        if llm_client is not None:
+            self.llm = llm_client
+        else:
+            # Use the new LLM factory
+            from src.llm.llm_factory import create_strategy_planner_llm
+            self.llm = create_strategy_planner_llm()
         self.settings = settings or {}
 
     @traceable(
@@ -43,7 +48,7 @@ class LLMStrategyPlannerAgent:
         Generate strategic portfolio recommendations based on backtest performance and market conditions.
         This call is traced to LangSmith.
         """
-        from src.prompts.llm_prompts import PROMPTS, build_strategy_planner_user_prompt
+        from src.configs.llm_prompts import PROMPTS, build_strategy_planner_user_prompt
 
         system_prompt = PROMPTS["strategy_planner"]
         user_prompt = build_strategy_planner_user_prompt(
@@ -65,11 +70,12 @@ class LLMStrategyPlannerAgent:
         logger.info(f"Raw LLM response (first 500 chars): {raw[:500]}")
 
         try:
-            data = json.loads(raw)
+            json_str = extract_json_from_llm_output(raw)
+            data = json.loads(json_str)
             logger.info("Successfully parsed LLM response as JSON")
         except json.JSONDecodeError as e:
             logger.warning(f"LLM returned invalid JSON: {e}. Raw response: {raw}")
-            # Fallback: create basic strategy plan structure
+            # Fallback: create basic strategy plan structure matching prompt schema
             data = {
                 "strategy_rankings": [
                     {
@@ -80,28 +86,38 @@ class LLMStrategyPlannerAgent:
                         "regime_performance": {
                             "bull": "neutral",
                             "bear": "neutral",
-                            "sideways": "neutral"
+                            "high_volatility": "neutral",
+                            "low_volatility": "neutral"
                         },
                         "strengths": ["Stable performance"],
-                        "weaknesses": ["Unable to parse detailed analysis"]
+                        "weaknesses": ["Unable to parse detailed analysis"],
+                        "allocation_recommendation": 1.0
                     }
                 ],
                 "portfolio_recommendations": {
                     "suggested_allocation": {
-                        "default_strategy": 1.0
+                        "Default Strategy": 1.0
                     },
                     "rationale": "Fallback allocation due to parsing error",
                     "expected_performance": {
                         "annual_return": 0.05,
+                        "annual_volatility": 0.10,
+                        "sharpe_ratio": 0.5,
                         "max_drawdown": 0.10,
-                        "sharpe_ratio": 1.0
+                        "sortino_ratio": 0.5
+                    },
+                    "diversification_metrics": {
+                        "correlation_matrix": "N/A",
+                        "concentration_risk": "high",
+                        "regime_coverage": "poor"
                     }
                 },
                 "regime_specific_notes": [
                     {
                         "regime": "current",
-                        "recommendations": ["Monitor system performance", "Review strategy backtests"],
-                        "expected_impact": "Improved decision making"
+                        "strategies_to_prefer": ["Default Strategy"],
+                        "strategies_to_avoid": [],
+                        "comment": "Fallback due to parse error."
                     }
                 ],
                 "tactical_adjustments": [
@@ -109,26 +125,41 @@ class LLMStrategyPlannerAgent:
                         "adjustment": "Maintain current allocation",
                         "condition": "Until detailed analysis available",
                         "rationale": "Conservative approach during system issues",
-                        "time_horizon": "Immediate"
+                        "time_horizon": "Immediate",
+                        "expected_impact": "Stability"
                     }
                 ],
+                "risk_considerations": {
+                    "portfolio_risk_metrics": {
+                        "value_at_risk_95": 0.05,
+                        "expected_shortfall_95": 0.07,
+                        "stress_test_results": "N/A"
+                    },
+                    "risk_mitigation_suggestions": ["Monitor manually"],
+                    "tail_risk_assessment": "Unknown"
+                },
                 "experiments_to_run": [
-                    {
-                        "experiment": "Verify strategy analysis pipeline",
-                        "hypothesis": "System can provide detailed strategy recommendations",
-                        "expected_impact": "Enhanced portfolio optimization",
-                        "resource_requirement": "low"
-                    }
+                    "Verify strategy analysis pipeline"
                 ],
                 "implementation_considerations": {
-                    "transition_costs": "Minimal during fallback",
-                    "monitoring_requirements": "Standard system monitoring",
-                    "risk_limits": "Conservative limits applied",
-                    "backtest_period": "Current backtest data"
+                    "transition_costs": "Minimal",
+                    "monitoring_requirements": "Standard",
+                    "risk_limits": "Conservative",
+                    "backtest_period": "N/A"
                 }
             }
 
-        return StrategyPlan(**data)
+        # Validate and filter
+        valid_keys = StrategyPlan.__annotations__.keys()
+        filtered = {k: v for k, v in data.items() if k in valid_keys}
+        
+        # Ensure required fields
+        if "risk_considerations" not in filtered:
+            filtered["risk_considerations"] = {}
+        if "experiments_to_run" not in filtered:
+            filtered["experiments_to_run"] = []
+
+        return StrategyPlan(**filtered)
 
     def format_strategy_report(self, strategy_plan: StrategyPlan) -> str:
         """
@@ -143,13 +174,14 @@ class LLMStrategyPlannerAgent:
         # Strategy Rankings
         md.append("## Strategy Rankings")
         for strategy in strategy_plan.strategy_rankings:
-            md.append(f"### {strategy['strategy_name']} (Rank: {strategy['overall_rank']})")
-            md.append(f"- **Performance Score:** {strategy['performance_score']:.2f}")
-            md.append(f"- **Risk Score:** {strategy['risk_score']:.2f}")
+            md.append(f"### {strategy.get('strategy_name', 'Unknown')} (Rank: {strategy.get('overall_rank', 'N/A')})")
+            md.append(f"- **Performance Score:** {strategy.get('performance_score', 0):.2f}")
+            md.append(f"- **Risk Score:** {strategy.get('risk_score', 0):.2f}")
+            md.append(f"- **Allocation:** {strategy.get('allocation_recommendation', 0):.1%}")
             md.append("")
 
             md.append("**Regime Performance:**")
-            for regime, perf in strategy['regime_performance'].items():
+            for regime, perf in strategy.get('regime_performance', {}).items():
                 md.append(f"  - {regime.title()}: {perf}")
             md.append("")
 
@@ -167,55 +199,70 @@ class LLMStrategyPlannerAgent:
         md.append("## Portfolio Recommendations")
         portfolio = strategy_plan.portfolio_recommendations
         md.append("### Suggested Allocation")
-        for strategy_name, weight in portfolio['suggested_allocation'].items():
+        for strategy_name, weight in portfolio.get('suggested_allocation', {}).items():
             md.append(f"- {strategy_name}: {weight:.1%}")
         md.append("")
 
-        md.append(f"**Rationale:** {portfolio['rationale']}")
+        md.append(f"**Rationale:** {portfolio.get('rationale', '')}")
         md.append("")
 
         md.append("### Expected Performance")
-        perf = portfolio['expected_performance']
-        md.append(f"- Annual Return: {perf['annual_return']:.1%}")
-        md.append(f"- Max Drawdown: {perf['max_drawdown']:.1%}")
-        md.append(f"- Sharpe Ratio: {perf['sharpe_ratio']:.2f}")
+        perf = portfolio.get('expected_performance', {})
+        md.append(f"- Annual Return: {perf.get('annual_return', 0):.1%}")
+        md.append(f"- Max Drawdown: {perf.get('max_drawdown', 0):.1%}")
+        md.append(f"- Sharpe Ratio: {perf.get('sharpe_ratio', 0):.2f}")
         md.append("")
 
         # Regime-Specific Notes
         md.append("## Regime-Specific Notes")
         for note in strategy_plan.regime_specific_notes:
-            md.append(f"### {note['regime'].title()} Market Conditions")
-            md.append("**Recommendations:**")
-            for rec in note.get('recommendations', []):
-                md.append(f"  - {rec}")
-            md.append(f"**Expected Impact:** {note.get('expected_impact', 'N/A')}")
+            md.append(f"### {note.get('regime', 'Unknown').title()} Market Conditions")
+            md.append("**Strategies to Prefer:**")
+            for s in note.get('strategies_to_prefer', []):
+                md.append(f"  - {s}")
+            md.append("**Strategies to Avoid:**")
+            for s in note.get('strategies_to_avoid', []):
+                md.append(f"  - {s}")
+            md.append(f"**Comment:** {note.get('comment', '')}")
             md.append("")
 
         # Tactical Adjustments
         md.append("## Tactical Adjustments")
         for adjustment in strategy_plan.tactical_adjustments:
-            md.append(f"### {adjustment['adjustment']}")
-            md.append(f"- **Condition:** {adjustment['condition']}")
-            md.append(f"- **Rationale:** {adjustment['rationale']}")
-            md.append(f"- **Time Horizon:** {adjustment['time_horizon']}")
+            md.append(f"### {adjustment.get('adjustment', 'Adjustment')}")
+            md.append(f"- **Condition:** {adjustment.get('condition', '')}")
+            md.append(f"- **Rationale:** {adjustment.get('rationale', '')}")
+            md.append(f"- **Time Horizon:** {adjustment.get('time_horizon', '')}")
             md.append("")
+
+        # Risk Considerations
+        md.append("## Risk Considerations")
+        risk = strategy_plan.risk_considerations
+        metrics = risk.get('portfolio_risk_metrics', {})
+        md.append("### Portfolio Risk Metrics")
+        md.append(f"- VaR (95%): {metrics.get('value_at_risk_95', 'N/A')}")
+        md.append(f"- Expected Shortfall (95%): {metrics.get('expected_shortfall_95', 'N/A')}")
+        md.append("")
+        
+        md.append("### Mitigation Suggestions")
+        for sugg in risk.get('risk_mitigation_suggestions', []):
+            md.append(f"- {sugg}")
+        md.append("")
 
         # Experiments to Run
         md.append("## Recommended Experiments")
         for experiment in strategy_plan.experiments_to_run:
-            md.append(f"### {experiment['experiment']}")
-            md.append(f"- **Hypothesis:** {experiment['hypothesis']}")
-            md.append(f"- **Expected Impact:** {experiment['expected_impact']}")
-            md.append(f"- **Resource Requirement:** {experiment['resource_requirement']}")
-            md.append("")
+            # experiment is a string in the new schema
+            md.append(f"- {experiment}")
+        md.append("")
 
         # Implementation Considerations
         md.append("## Implementation Considerations")
         impl = strategy_plan.implementation_considerations
-        md.append(f"- **Transition Costs:** {impl['transition_costs']}")
-        md.append(f"- **Monitoring Requirements:** {impl['monitoring_requirements']}")
-        md.append(f"- **Risk Limits:** {impl['risk_limits']}")
-        md.append(f"- **Backtest Period:** {impl['backtest_period']}")
+        md.append(f"- **Transition Costs:** {impl.get('transition_costs', 'N/A')}")
+        md.append(f"- **Monitoring Requirements:** {impl.get('monitoring_requirements', 'N/A')}")
+        md.append(f"- **Risk Limits:** {impl.get('risk_limits', 'N/A')}")
+        md.append(f"- **Backtest Period:** {impl.get('backtest_period', 'N/A')}")
         md.append("")
 
         md.append("---")

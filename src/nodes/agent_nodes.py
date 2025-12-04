@@ -6,6 +6,7 @@ from dataclasses import asdict
 from ..graphs.state import GraphState
 from ..agents.feature_agent import FeatureAgent
 from ..agents.news_data_agent import NewsDataAgent
+from ..agents.portfolio_manager_agent import PortfolioManagerAgent
 from ..agents.llm_news_agent import LLMNewsFeatureAgent
 from ..agents.auto_documentation_agent import AutoDocumentationAgent, MetricsSnapshot
 from ..features.news_analytics import detect_news_shock
@@ -93,7 +94,11 @@ def feature_agent_node(state: GraphState) -> GraphState:
         logger.warning(f"FeatureEngineer import failed ({e}), falling back to basic FeatureAgent")
         # Fallback to original simple feature agent
         agent = FeatureAgent()
-        features = agent.generate_features(state['raw_data'])
+        features = agent.generate_features(
+            state['raw_data'],
+            macro_data=state.get('macro_data'),
+            regimes=state.get('regimes')
+        )
         
         # Merge news features for fallback path too
         for symbol, df in features.items():
@@ -147,7 +152,10 @@ def decision_agent_node(state: GraphState, config: dict) -> GraphState:
     """
     logger.info("--- Node: Decision Agent ---")
     agent = DecisionAgent(config.get('hpo', {}))
-    trust_calculator = TrustScoreCalculator()
+    
+    # Extract trust score config
+    trust_config = config.get('quality', {}).get('trust_score', {})
+    trust_calculator = TrustScoreCalculator(trust_config)
     
     # Convert analytics_summary back to DataFrame for the agent
     analytics_summary = pd.DataFrame(state.get('analytics_summary', []))
@@ -181,7 +189,11 @@ def decision_agent_node(state: GraphState, config: dict) -> GraphState:
         
         # Use Trust Score to determine action
         trust_score = trust_scores.get(symbol, 0.5)
-        trading_decision = agent.get_trading_decision(symbol, trust_score)
+        trading_decision = agent.get_trading_decision(
+            symbol, 
+            trust_score,
+            regimes=state.get('regimes')
+        )
         
         if trading_decision['auto_trade_allowed']:
             action = f"Promote {model_family} for {symbol} (Trust: {trust_score:.2f}, Size: {trading_decision['position_size_multiplier']}x)"
@@ -636,7 +648,8 @@ def forecast_agent_node(state: GraphState) -> GraphState:
 
             # Create regime info
             regime_info = {
-                'guardrail_flags': current_guardrail_flags
+                'guardrail_flags': current_guardrail_flags,
+                'market_regimes': state.get('regimes', {})
             }
 
             # Transform forecasts from Dict[model_family, DataFrame] to List[Dict]
@@ -747,4 +760,24 @@ def auto_documentation_node(state: GraphState) -> GraphState:
     except Exception as e:
         logger.error(f"Auto-documentation failed: {e}")
         
+    return state
+
+def portfolio_manager_node(state: GraphState, config: dict) -> GraphState:
+    """
+    Runs the portfolio manager agent to construct the target portfolio.
+    """
+    logger.info("--- Node: Portfolio Manager Agent ---")
+    agent = PortfolioManagerAgent(config.get('portfolio', {}))
+    
+    result = agent.construct_portfolio(
+        state.get('recommended_actions', []),
+        state.get('best_models', {}),
+        state.get('raw_data', {})
+    )
+    
+    state['target_portfolio'] = result['target_weights']
+    state['portfolio_risk'] = result['risk_metrics']
+    state['portfolio_status'] = result['risk_status']
+    
+    logger.info(f"Constructed portfolio with {len(result['target_weights'])} assets. Status: {result['risk_status']}")
     return state

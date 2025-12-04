@@ -42,7 +42,7 @@ def load_config():
             return yaml.safe_load(f)
     return {}
 
-def load_symbols_from_csv(csv_path="watchlist_ibkr.csv"):
+def load_symbols_from_csv(csv_path="watchlist_main.csv"):
     """Load symbols from CSV file"""
     if os.path.exists(csv_path):
         try:

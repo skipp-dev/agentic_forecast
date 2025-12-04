@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang='en'>
+<head>
+    <meta charset='UTF-8'>
+    <meta name='viewport' content='width=device-width, initial-scale=1.0'>
+    <title>System Forecasting Report</title>
+    <style>
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; margin: 0; padding: 20px; background-color: #f5f5f5; }
+        .container { max-width: 1200px; margin: 0 auto; background: white; padding: 30px; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+        h1 { color: #2c3e50; border-bottom: 3px solid #3498db; padding-bottom: 10px; }
+        h2 { color: #34495e; margin-top: 30px; border-left: 4px solid #3498db; padding-left: 15px; }
+        .executive-summary { background: #ecf0f1; padding: 20px; border-radius: 5px; margin: 20px 0; }
+        .section-box { background: #fff; border: 1px solid #ddd; padding: 15px; margin: 10px 0; border-radius: 5px; }
+        .risk-item { background: #fff3cd; padding: 10px; margin: 5px 0; border-radius: 3px; border-left: 4px solid #ffc107; }
+        .opp-item { background: #d4edda; padding: 10px; margin: 5px 0; border-radius: 3px; border-left: 4px solid #28a745; }
+        .action-item { background: #d1ecf1; padding: 15px; margin: 10px 0; border-radius: 5px; border-left: 4px solid #17a2b8; }
+        .timestamp { color: #6c757d; font-size: 0.9em; }
+    </style>
+</head>
+<body>
+    <div class='container'>
+        <h1>System Forecasting Report</h1>
+        <p class='timestamp'>Generated: 20251203_223002</p>
+        <h2>Executive Summary</h2>
+        <div class='executive-summary'>
+            <p>The latest run of the forecasting platform processed 576 symbols with a focus on hyperparameter optimization (HPO). Despite the completion of 341 optimizations, no significant performance improvements were observed, as indicated by an average performance of 0. Additionally, 342 anomalies were detected, signaling potential issues that require further investigation. The system passed all health checks, allowing for continued operations, but the presence of errors and lack of performance metrics necessitates careful monitoring moving forward.</p>
+        </div>
+        <h2>Performance Overview</h2>
+        <p><em>Audience: mixed</em></p>
+        <div class='section-box'>
+            - **Total Symbols Processed**: 576<br>- **Models Trained**: 342<br>- **Optimizations Completed**: 341<br>- **Anomalies Detected**: 342<br>- **Errors Encountered**: 469<br><br>The run focused on optimizing multiple symbols, but the average performance remains at 0, indicating no improvements in forecasting accuracy.
+        </div>
+        <h2>Detailed Analytics</h2>
+        <p><em>Audience: quants</em></p>
+        <div class='section-box'>
+            - **Average MAPE**: 0<br>- **Top Performers**: None identified<br>- **Risk Metrics**: No high-risk symbols detected<br><br>The evaluation metrics analysis did not yield significant insights, and the absence of top performers suggests a need for further model refinement.
+        </div>
+        <h2>Operational Insights</h2>
+        <p><em>Audience: ops</em></p>
+        <div class='section-box'>
+            - **Health Check Summary**: All 330 checks passed, with no critical issues identified.<br>- **Execution Time**: Not available<br><br>The system is cleared to proceed, but the high number of errors encountered during the run indicates a need for operational adjustments.
+        </div>
+        <h2>Key Findings and Market Implications</h2>
+        <p><em>Audience: mixed</em></p>
+        <div class='section-box'>
+            - **Key Findings**: 342 anomalous patterns detected, requiring attention.<br>- **Market Implications**: Analysis completed with SHAP insights and anomaly detection, but no significant insights were identified from evaluation metrics.
+        </div>
+        <h2>Key Risks</h2>
+        <div class='risk-item'>High number of errors encountered (469) during the run.</div>
+        <div class='risk-item'>No significant performance improvements observed despite optimizations.</div>
+        <h2>Key Opportunities</h2>
+        <div class='opp-item'>Potential to address 342 detected anomalies to improve model performance.</div>
+        <div class='opp-item'>Opportunity to refine models based on insights from SHAP analysis.</div>
+        <h2>Actions for Quants</h2>
+        <div class='action-item'>Investigate the detected anomalies and assess their impact on forecasting accuracy.</div>
+        <h2>Actions for Ops</h2>
+        <div class='action-item'>Review and address the errors encountered during the run to enhance system reliability.</div>
+    </div>
+</body>
+</html>

@@ -2,6 +2,8 @@ from typing import List, Dict, Any
 from dataclasses import dataclass
 import logging
 import pandas as pd
+import json
+from src.utils.llm_utils import extract_json_from_llm_output
 
 logger = logging.getLogger(__name__)
 
@@ -33,7 +35,7 @@ class LLMNewsFeatureAgent:
     def __init__(self, llm_client):
         self.llm = llm_client
         try:
-            from src.prompts.llm_prompts import get_prompt
+            from src.configs.llm_prompts import get_prompt
             self.get_prompt = get_prompt
         except ImportError:
             self.get_prompt = lambda x, **kwargs: f"Analyze news for {kwargs.get('symbol')}: {kwargs.get('headline')}"
@@ -51,15 +53,24 @@ class LLMNewsFeatureAgent:
         )
         
         # logger.info(f"Enriching news for {item.symbol}")
+        data = {}
         if hasattr(self.llm, 'chat'):
             try:
+                # Ensure we get a string response
                 response = self.llm.chat(prompt)
-                data = response.json() if hasattr(response, 'json') else {}
+                if hasattr(response, 'content'): # Handle object with content attr
+                     raw_text = response.content
+                elif hasattr(response, 'json'): # Handle requests-like object (unlikely for chat but possible)
+                     # This was the old suspicious code, but if it returns a response object, we want text
+                     raw_text = response.text if hasattr(response, 'text') else str(response)
+                else:
+                     raw_text = str(response)
+
+                json_str = extract_json_from_llm_output(raw_text)
+                data = json.loads(json_str)
             except Exception as e:
                 logger.warning(f"LLM enrichment failed: {e}")
                 data = {}
-        else:
-            data = {}
         
         return EnrichedNewsFeature(
             symbol=item.symbol,

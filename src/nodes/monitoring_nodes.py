@@ -13,6 +13,10 @@ def drift_detection_node(state: GraphState) -> GraphState:
     
     # Convert DataFrame to serializable format for LangSmith tracing
     if not drift_metrics.empty:
+        # Ensure index is symbol for efficient lookup
+        if 'symbol' in drift_metrics.columns:
+            drift_metrics = drift_metrics.set_index('symbol')
+        
         drift_metrics.index = drift_metrics.index.astype(str)
         state['drift_metrics'] = drift_metrics.to_dict('index')
         
@@ -41,6 +45,10 @@ def risk_assessment_node(state: GraphState) -> GraphState:
     
     # Convert DataFrame to serializable format for LangSmith tracing
     if not risk_kpis.empty:
+        # Ensure index is symbol for efficient lookup
+        if 'symbol' in risk_kpis.columns:
+            risk_kpis = risk_kpis.set_index('symbol')
+            
         risk_kpis.index = risk_kpis.index.astype(str)
         state['risk_kpis'] = risk_kpis.to_dict('index')
     else:

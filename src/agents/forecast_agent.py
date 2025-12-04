@@ -304,11 +304,13 @@ class ForecastAgent:
         # Build risk assessment
         trust_score, trust_reasons = self._compute_trust_score(error_metrics, guardrail_flags)
         
+        market_regimes = regime_and_guardrail_info.get("market_regimes", {}) if regime_and_guardrail_info else {}
+        
         risk_assessment = {
             "model_confidence_comment": self._build_model_confidence_comment(
                 error_metrics, confidence_reasons
             ),
-            "regime_comment": self._build_regime_comment(guardrail_flags),
+            "regime_comment": self._build_regime_comment(guardrail_flags, market_regimes),
             "guardrail_flags": guardrail_flags,
             "trust_score": trust_score,
             "trust_reasons": trust_reasons
@@ -522,12 +524,20 @@ class ForecastAgent:
         comment = f"Model expects a {magnitude} {direction} move ({predicted_return:.2%}) over the {horizon_desc} with {confidence} confidence."
 
         # Add regime context if relevant
-        if regime_info and regime_info.get("guardrail_flags"):
-            flags = set(regime_info["guardrail_flags"])
-            if "shock_regime_active" in flags:
-                comment += " Shock regime may amplify volatility."
-            elif "high_error_recently" in flags:
-                comment += " Recent forecast errors suggest caution."
+        if regime_info:
+            if regime_info.get("guardrail_flags"):
+                flags = set(regime_info["guardrail_flags"])
+                if "shock_regime_active" in flags:
+                    comment += " Shock regime may amplify volatility."
+                elif "high_error_recently" in flags:
+                    comment += " Recent forecast errors suggest caution."
+            
+            # Add market regime context
+            market_regimes = regime_info.get("market_regimes", {})
+            if market_regimes.get("rate_regime") == "high_rates":
+                comment += " High interest rate environment detected."
+            if market_regimes.get("oil_regime") == "spike":
+                comment += " Oil price spike may impact costs."
 
         return comment
 
@@ -544,22 +554,32 @@ class ForecastAgent:
         else:
             return "Model confidence assessment not available."
 
-    def _build_regime_comment(self, guardrail_flags: List[str]) -> str:
+    def _build_regime_comment(self, guardrail_flags: List[str], market_regimes: Dict[str, str] = None) -> str:
         """
-        Build regime comment based on active guardrail flags.
+        Build regime comment based on active guardrail flags and market regimes.
         """
+        comments = []
         flags = set(guardrail_flags or [])
 
         if "shock_regime_active" in flags:
-            return "Shock regime is active; volatility and gap risk are elevated."
+            comments.append("Shock regime is active; volatility and gap risk are elevated.")
         elif "news_shock_active" in flags:
-            return "Recent strong news flow may cause sudden moves beyond the model's typical error profile."
+            comments.append("Recent strong news flow may cause sudden moves beyond the model's typical error profile.")
         elif "high_error_recently" in flags:
-            return "Recent forecast errors were elevated; recent behavior may be less predictable than usual."
-        elif not flags:
+            comments.append("Recent forecast errors were elevated; recent behavior may be less predictable than usual.")
+            
+        if market_regimes:
+            if market_regimes.get("rate_regime") == "high_rates":
+                comments.append("Market is in a High Rates regime.")
+            if market_regimes.get("oil_regime") == "spike":
+                comments.append("Oil prices are spiking.")
+            if market_regimes.get("gold_regime") == "rally":
+                comments.append("Gold rally suggests risk-off sentiment.")
+                
+        if not comments:
             return "No active guardrail flags; regime appears normal from the model's perspective."
-        else:
-            return f"Guardrail flags active: {', '.join(sorted(flags))}."
+            
+        return " ".join(comments)
 
     def _generate_scenario_notes(
         self,

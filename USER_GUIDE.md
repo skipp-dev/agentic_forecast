@@ -2,7 +2,7 @@
 
 ## Phase 1 Complete: Production-Ready Financial Forecasting System
 
-This comprehensive guide covers the Agentic Forecast system - a production-validated, agent-driven forecasting platform that successfully processes **576 symbols** from the IBKR watchlist with perfect directional accuracy.
+This comprehensive guide covers the Agentic Forecast system - a production-validated, agent-driven forecasting platform that successfully processes **576 symbols** from the main watchlist with perfect directional accuracy.
 
 ---
 
@@ -27,13 +27,13 @@ This comprehensive guide covers the Agentic Forecast system - a production-valid
 Agentic Forecast is an **enterprise-grade, autonomous financial forecasting system** that combines:
 
 - **🤖 Agentic Architecture**: Specialized agents handle different aspects of the forecasting pipeline
-- **📊 Production Scale**: Processes 576+ symbols from IBKR watchlist
+- **📊 Production Scale**: Processes 576+ symbols from main watchlist
 - **🔄 End-to-End Automation**: From data ingestion to model deployment
 - **📈 Perfect Validation**: Achieved DA=1.000, MAE=0.000 in Phase 1 testing
 
 ### Key Achievements (Phase 1)
 
-✅ **Data Pipeline**: Successfully ingests data for all 576 IBKR symbols
+✅ **Data Pipeline**: Successfully ingests data for all 576 symbols
 ✅ **Feature Engineering**: Generates 76 technical indicators per symbol
 ✅ **Model Training**: Trains 282 baseline models with perfect performance
 ✅ **Production Ready**: Comprehensive logging, error handling, and monitoring
@@ -108,7 +108,7 @@ The system will autonomously:
 
 #### 1. Data Layer
 - **Alpha Vantage Integration**: Premium API with 300 calls/minute
-- **576 Symbol Universe**: Full IBKR watchlist processing
+- **576 Symbol Universe**: Full watchlist processing
 - **Incremental Updates**: Smart caching and data validation
 - **Rate Limiting**: Intelligent API call management
 
@@ -245,7 +245,7 @@ system:
 
 ### Symbol Universe
 
-The system uses `watchlist_ibkr.csv` containing 576 symbols:
+The system uses `watchlist_main.csv` containing 576 symbols:
 
 ```csv
 Symbol,Currency,PrimaryExchange
@@ -614,7 +614,7 @@ The system follows a logical "Graph" workflow. Here is the sequence of events:
 
 1.  **Start:** You run `python main.py`.
 2.  **Data Ingestion:**
-    *   *Action:* Fetches latest data for ALL symbols in `watchlist_ibkr.csv` (e.g., 500+ symbols).
+    *   *Action:* Fetches latest data for ALL symbols in `watchlist_main.csv` (e.g., 500+ symbols).
 3.  **Drift Check:**
     *   *Trigger:* Completion of data fetching.
     *   *Action:* Statistically analyzes incoming data. Has the market volatility changed? Are correlations broken?
@@ -638,7 +638,7 @@ The system follows a logical "Graph" workflow. Here is the sequence of events:
 | **Model Maintenance** | ✅ **Automated** | Self-healing. Retrains models automatically when accuracy drops. |
 | **Resource Management** | ✅ **Automated** | Swaps 3 different LLMs in/out of 12GB VRAM automatically. |
 | **Reporting** | ✅ **Automated** | Writes Markdown reports to disk. |
-| **Configuration** | ✋ **Manual** | You set API keys and the symbol list (`watchlist_ibkr.csv`) once. |
+| **Configuration** | ✋ **Manual** | You set API keys and the symbol list (`watchlist_main.csv`) once. |
 
 ## 6. System Interaction Guide
 

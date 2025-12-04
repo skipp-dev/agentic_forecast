@@ -152,10 +152,25 @@ def _load_data_sync(state: GraphState) -> GraphState:
     else:
         raw_data = prices_dict
 
-    # Final cleanup: Convert indices to string for consistency/serialization
+    # Final cleanup: Ensure indices are DatetimeIndex for downstream processing
+    # We do NOT convert to string here because FeatureEngineer requires DatetimeIndex
+    # Serialization happens in the nodes that produce final outputs (e.g. features, forecasts)
+    
+    # Ensure output directory exists
+    output_dir = os.path.join("data", "raw", "alpha_vantage")
+    os.makedirs(output_dir, exist_ok=True)
+
     for symbol, df in raw_data.items():
-        if isinstance(df.index, pd.DatetimeIndex):
-            df.index = df.index.astype(str)
+        if not isinstance(df.index, pd.DatetimeIndex):
+            df.index = pd.to_datetime(df.index)
+        
+        # Save to Parquet for robust serialization/checkpointing
+        try:
+            parquet_path = os.path.join(output_dir, f"{symbol}.parquet")
+            df.to_parquet(parquet_path)
+            logger.debug(f"Saved {symbol} data to {parquet_path}")
+        except Exception as e:
+            logger.warning(f"Failed to save Parquet for {symbol}: {e}")
 
     state['raw_data'] = raw_data
     return state

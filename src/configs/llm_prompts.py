@@ -26,53 +26,53 @@ Rules:
 
 You MUST return valid JSON with this structure:
 
-{
+{{
   "global_summary": "High-level explanation of overall health in 5–10 sentences.",
-  "metric_explanations": {
+  "metric_explanations": {{
     "mae": "What MAE tells us in this run, including any trends.",
     "mape": "What MAPE tells us, especially outliers or strange values.",
     "smape": "What SMAPE tells us, including if it diverges from MAPE.",
     "mase": "What MASE tells us about scaling vs naive baselines.",
     "swase": "What SWASE tells us, especially bias or asymmetric errors in shock regimes.",
     "directional_accuracy": "How often we get the direction right and where it fails."
-  },
+  }},
   "regime_insights": [
-    {
+    {{
       "regime": "regime label or flag combination",
       "performance_comment": "How performance changes in this regime.",
       "risk_comment": "Why this regime is risky or safe for deployment."
-    }
+    }}
   ],
   "symbol_outliers": [
-    {
+    {{
       "symbol": "TICKER",
       "horizon": 1,
       "issue": "Short description, e.g. 'very high SWASE in shock regime'",
       "comment": "More detailed explanation and possible reasons."
-    }
+    }}
   ],
-  "feature_insights": {
+  "feature_insights": {{
     "overall_top_features": [
-      {
+      {{
         "name": "feature_name",
         "importance_comment": "Why it seems important overall."
-      }
+      }}
     ],
     "shock_regime_top_features": [
-      {
+      {{
         "name": "feature_name",
         "importance_comment": "Why it matters specifically in shock regimes."
-      }
+      }}
     ]
-  },
+  }},
   "recommendations": [
-    {
+    {{
       "category": "HPO | MODEL_SWITCH | FEATURES | RISK | DATA_QUALITY",
       "action": "Concrete action, e.g. 'Run HPO for [AAPL, NVDA] on 5d horizon'.",
       "reason": "Short justification grounded in the metrics."
-    }
+    }}
   ]
-}
+}}
 """,
 
     "analytics_explainer_user_template": """
@@ -114,38 +114,38 @@ Guidelines:
 
 You MUST return valid JSON with this structure:
 
-{
+{{
   "symbols_to_focus": ["AAPL", "NVDA", "MSFT"],
   "horizons_to_focus": [1, 5, 10],
   "families_to_prioritize": ["naive", "neuralforecast_nhits", "neuralforecast_tft"],
-  "per_family_search_spaces": {
-    "neuralforecast_nhits": {
+  "per_family_search_spaces": {{
+    "neuralforecast_nhits": {{
       "num_stacks": [1, 2, 3],
       "dropout": [0.0, 0.1, 0.2],
       "learning_rate": [1e-4, 3e-4, 1e-3]
-    },
-    "neuralforecast_tft": {
+    }},
+    "neuralforecast_tft": {{
       "hidden_size": [64, 128, 256],
       "dropout": [0.0, 0.1, 0.2],
       "learning_rate": [1e-4, 3e-4, 1e-3]
-    }
-  },
-  "budget_allocation": {
+    }}
+  }},
+  "budget_allocation": {{
     "neuralforecast_nhits": 40,
     "neuralforecast_tft": 30,
     "other_families": 20,
     "exploration": 10
-  },
+  }},
   "symbol_family_overrides": [
-    {
+    {{
       "symbol": "AAPL",
       "horizon": 5,
       "families": ["neuralforecast_nhits", "neuralforecast_tft"],
       "note": "Underperforms on 5d horizon but business-critical; prioritize these families."
-    }
+    }}
   ],
   "notes": "Any additional rationale or caveats."
-}
+}}
 """,
 
     "hpo_planner_user_template": """
@@ -198,9 +198,9 @@ Rules:
 
 You MUST return valid JSON with this structure:
 
-{
+{{
   "per_item_annotations": [
-    {
+    {{
       "symbol": "AAPL",
       "timestamp_utc": "2025-11-28T14:32:00Z",
       "sentiment_label": "bullish",
@@ -208,10 +208,10 @@ You MUST return valid JSON with this structure:
       "impact": "mild",
       "category": "product",
       "horizon": "1-5d"
-    }
+    }}
   ],
   "daily_aggregates": [
-    {
+    {{
       "symbol": "AAPL",
       "date": "2025-11-28",
       "news_count": 7,
@@ -224,9 +224,9 @@ You MUST return valid JSON with this structure:
       "strong_impact_categories": ["earnings", "guidance"],
       "has_mna_news": false,
       "has_macro_news": true
-    }
+    }}
   ]
-}
+}}
 """,
 
     "news_enrichment_user_template": """
@@ -269,36 +269,36 @@ Rules:
 
 Output JSON with:
 
-{
+{{
   "high_level_narrative": "1–2 paragraphs describing what might be going on.",
   "macro_links": [
-    {
+    {{
       "factor": "US rates",
       "potential_effect": "Growth / tech names under pressure on rate spikes.",
       "relevance_for_symbols": ["AAPL", "MSFT", "NVDA"],
       "priority": "high"
-    }
+    }}
   ],
   "data_and_feature_suggestions": [
-    {
+    {{
       "idea": "Add WTI crude and gold returns as daily exogenous features.",
       "reason": "Energy and risk-off behavior may explain forecast errors in energy and defensive sectors.",
       "effort": "medium"
-    }
+    }}
   ],
   "regime_hypotheses": [
-    {
+    {{
       "name": "AI_hype",
       "description": "Narrow group of AI/semis driving index with high volatility.",
       "suspected_symbols": ["NVDA", "AMD"],
       "how_to_test": "Compare forecast errors and volatility in these symbols against rest of tech."
-    }
+    }}
   ],
   "next_steps_for_quants": [
     "Run targeted backtests including macro exogs for rate-sensitive buckets.",
     "Add simple commodity exogs for energy sector forecasts."
   ]
-}
+}}
 """,
 
     "research_agent_user_template": """
@@ -378,14 +378,14 @@ Rules:
 
 You MUST return valid JSON with this structure:
 
-{
+{{
   "executive_summary": "3–8 sentences summarizing the latest run.",
   "sections": [
-    {
+    {{
       "title": "Section title",
       "audience": "quants | ops | management | mixed",
       "body_markdown": "Markdown text with bullet points and short paragraphs."
-    }
+    }}
   ],
   "key_risks": [
     "Short bullet describing a key risk.",
@@ -401,7 +401,7 @@ You MUST return valid JSON with this structure:
   "actions_for_ops": [
     "Concrete follow-up task for ops / MLOps / SRE."
   ]
-}
+}}
 """,
 
     "reporting_agent_user_template": """
@@ -454,22 +454,22 @@ Rules:
 
 You MUST return valid JSON with this structure:
 
-{
+{{
   "symbol": "TICKER",
   "horizon": 5,
   "forecast_comment": "Short explanation of the forecast for this symbol and horizon.",
   "top_feature_drivers": [
-    {
+    {{
       "name": "feature_name",
       "role": "supporting_increase | supporting_decrease | mixed | unclear",
       "comment": "How this feature seems to influence the forecast."
-    }
+    }}
   ],
   "regime_and_risk_comment": "How the current regime and guardrails affect trust in this explanation.",
   "limitations": [
     "Short bullet about a limitation (e.g. high feature correlation)."
   ]
-}
+}}
 """,
 
     "explainability_agent_user_template": """
@@ -517,24 +517,24 @@ Rules:
 
 You MUST return valid JSON with this structure:
 
-{
+{{
   "channel_messages": [
-    {
+    {{
       "channel": "slack",
       "text": "Message text for Slack."
-    },
-    {
+    }},
+    {{
       "channel": "whatsapp",
       "text": "Short message for WhatsApp."
-    }
+    }}
   ],
-  "meta": {
+  "meta": {{
     "symbol": "TICKER",
     "horizon": 5,
     "alert_name": "HighConfidencePositiveForecast",
     "severity": "info | warning | critical"
-  }
-}
+  }}
+}}
 """,
 
     "notification_agent_user_template": """
@@ -810,7 +810,7 @@ def build_forecast_agent_user_prompt(forecast_data: dict, performance_metrics: d
     )
 
 
-def build_hpo_planner_user_prompt(past_hpo_runs: list, family_performance: dict, 
+def build_hpo_planner_user_prompt(past_hpo_runs: list, family_performance: object, 
                                  total_trials: int, min_trials: int, max_trials: int) -> str:
     """
     Build the user prompt for the HPO Planner.

@@ -200,9 +200,6 @@ def show_dashboard():
         issues = []
         recommendations = []
 
-        # Check if TWS is accessible (we know it is from earlier tests)
-        print("✅ TWS Connection: Available (port 7497)")
-
         # Check if models exist
         if not os.path.exists('models') or not any(f.endswith(('.pkl', '.joblib', '.h5', '.pt', '.pth'))
                                                   for root, dirs, files in os.walk('models')

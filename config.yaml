@@ -1,5 +1,11 @@
 # Configuration for the Agentic Forecasting Framework
 
+# --- Orchestrator Configuration ---
+orchestrator:
+  # Enable dynamic routing via LLM (Supervisor Agent)
+  # If false, uses static routing logic
+  dynamic_routing_enabled: false
+
 # --- Data Source Configuration ---
 data_source:
   # Primary data source to use.
@@ -27,7 +33,7 @@ ibkr:
   market_data_type: 3
 
 # --- Symbols Configuration ---
-# Symbols are automatically loaded from watchlist_ibkr.csv
+# Symbols are automatically loaded from watchlist_main.csv
 # No manual configuration needed - all symbols from CSV will be processed
 
 # --- Scaling Configuration ---

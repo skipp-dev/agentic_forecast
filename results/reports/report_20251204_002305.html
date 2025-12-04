@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang='en'>
+<head>
+    <meta charset='UTF-8'>
+    <meta name='viewport' content='width=device-width, initial-scale=1.0'>
+    <title>System Forecasting Report</title>
+    <style>
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; margin: 0; padding: 20px; background-color: #f5f5f5; }
+        .container { max-width: 1200px; margin: 0 auto; background: white; padding: 30px; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+        h1 { color: #2c3e50; border-bottom: 3px solid #3498db; padding-bottom: 10px; }
+        h2 { color: #34495e; margin-top: 30px; border-left: 4px solid #3498db; padding-left: 15px; }
+        .executive-summary { background: #ecf0f1; padding: 20px; border-radius: 5px; margin: 20px 0; }
+        .section-box { background: #fff; border: 1px solid #ddd; padding: 15px; margin: 10px 0; border-radius: 5px; }
+        .risk-item { background: #fff3cd; padding: 10px; margin: 5px 0; border-radius: 3px; border-left: 4px solid #ffc107; }
+        .opp-item { background: #d4edda; padding: 10px; margin: 5px 0; border-radius: 3px; border-left: 4px solid #28a745; }
+        .action-item { background: #d1ecf1; padding: 15px; margin: 10px 0; border-radius: 5px; border-left: 4px solid #17a2b8; }
+        .timestamp { color: #6c757d; font-size: 0.9em; }
+    </style>
+</head>
+<body>
+    <div class='container'>
+        <h1>System Forecasting Report</h1>
+        <p class='timestamp'>Generated: 20251204_002305</p>
+        <h2>Executive Summary</h2>
+        <div class='executive-summary'>
+            <p>The latest run of the forecasting platform processed 576 symbols with a focus on high-performance optimization (HPO). Despite the completion of HPO, no significant performance improvements were observed, as indicated by an average performance of 0 and no top performers identified. Additionally, 172 anomalies were detected, highlighting areas that require further investigation. The system passed all health checks, allowing for continued operation, but the high number of errors encountered (809) raises concerns about data quality and model performance.</p>
+        </div>
+        <h2>Analytics Overview</h2>
+        <p><em>Audience: quants</em></p>
+        <div class='section-box'>
+            - Total symbols processed: 576<br>- Average performance: 0<br>- Total models evaluated: 0<br>- Anomalies detected: 172<br>- No high-risk symbols identified.
+        </div>
+        <h2>HPO Planning Results</h2>
+        <p><em>Audience: ops</em></p>
+        <div class='section-box'>
+            - HPO completed successfully with 3 symbols optimized: AAPL, TSLA, MSFT.<br>- Best MAPE for all optimized symbols is 0.0, indicating no improvement.<br>- Next priorities for optimization are currently undefined.
+        </div>
+        <h2>Research Insights</h2>
+        <p><em>Audience: mixed</em></p>
+        <div class='section-box'>
+            - 172 anomalous patterns detected that require attention.<br>- Market implications analyzed with SHAP insights, but no significant insights from evaluation metrics.<br>- Recommendations for further data analysis are needed.
+        </div>
+        <h2>Health and Guardrails Summary</h2>
+        <p><em>Audience: management</em></p>
+        <div class='section-box'>
+            - Total checks conducted: 166<br>- Passed checks: 0<br>- Failed checks: 0<br>- Warnings: 0<br>- Critical issues: None identified, system can proceed.
+        </div>
+        <h2>Key Risks</h2>
+        <div class='risk-item'>High number of errors encountered (809) may indicate underlying data quality issues.</div>
+        <div class='risk-item'>No significant performance improvements from HPO could affect future forecasting reliability.</div>
+        <h2>Key Opportunities</h2>
+        <div class='opp-item'>Investigate the 172 detected anomalies to enhance model accuracy.</div>
+        <div class='opp-item'>Explore alternative optimization strategies for the symbols that did not improve.</div>
+        <h2>Actions for Quants</h2>
+        <div class='action-item'>Conduct a detailed analysis of the anomalies detected to identify root causes.</div>
+        <h2>Actions for Ops</h2>
+        <div class='action-item'>Review the error logs to address the 809 errors encountered during the run.</div>
+    </div>
+</body>
+</html>

@@ -1,8 +1,9 @@
-from typing import Dict, Any, Optional
-from dataclasses import dataclass
+from typing import Dict, Any, List, Optional
+from dataclasses import dataclass, field
 import logging
 import json
 from langsmith import traceable
+from src.utils.llm_utils import extract_json_from_llm_output
 
 logger = logging.getLogger(__name__)
 
@@ -15,9 +16,8 @@ class NotificationInput:
 
 @dataclass
 class NotificationOutput:
-    severity_assessment: Dict[str, Any]
-    prioritized_alerts: list
-    channel_messages: list
+    channel_messages: List[Dict[str, Any]]
+    meta: Dict[str, Any]
 
 class LLMNotificationAgent:
     """
@@ -39,7 +39,8 @@ class LLMNotificationAgent:
         Generate human-friendly notifications from technical alerts.
         This call is traced to LangSmith.
         """
-        from src.prompts.llm_prompts import PROMPTS, build_notification_agent_user_prompt
+        # Correct import path for prompts
+        from src.configs.llm_prompts import PROMPTS, build_notification_agent_user_prompt
 
         system_prompt = PROMPTS["notification_agent"]
         user_prompt = build_notification_agent_user_prompt(
@@ -61,51 +62,51 @@ class LLMNotificationAgent:
         logger.info(f"Raw LLM response (first 500 chars): {raw[:500]}")
 
         try:
-            data = json.loads(raw)
+            json_str = extract_json_from_llm_output(raw)
+            data = json.loads(json_str)
             logger.info("Successfully parsed LLM response as JSON")
         except json.JSONDecodeError as e:
             logger.warning(f"LLM returned invalid JSON: {e}. Raw response: {raw}")
-            # Fallback: create basic notification structure
+            # Fallback: create basic notification structure matching prompt schema
             data = {
-                "severity_assessment": {
-                    "overall_level": "warning",
-                    "business_impact": "medium",
-                    "requires_immediate_action": False
-                },
-                "prioritized_alerts": [
-                    {
-                        "alert_id": "parse_error",
-                        "priority": "medium",
-                        "title": "Alert Processing Error",
-                        "summary": "Unable to parse alert data structure",
-                        "impact": "Notifications may be incomplete"
-                    }
-                ],
                 "channel_messages": [
                     {
                         "channel": notification_input.channel,
-                        "priority": "warning",
-                        "title": "System Alert",
-                        "message": f"Alert processing encountered an error. Raw response: {raw[:200]}...",
-                        "actions": ["Check system logs", "Verify alert data format"],
-                        "metadata": {
-                            "alert_count": 1,
-                            "severity_breakdown": {"critical": 0, "warning": 1, "info": 0}
-                        }
+                        "text": f"System Alert: Alert processing encountered an error. Raw response: {raw[:100]}..."
                     }
-                ]
+                ],
+                "meta": {
+                    "symbol": "UNKNOWN",
+                    "horizon": 0,
+                    "alert_name": "ParseError",
+                    "severity": "warning"
+                }
             }
 
-        return NotificationOutput(**data)
+        # Validate and filter
+        valid_keys = NotificationOutput.__annotations__.keys()
+        filtered = {k: v for k, v in data.items() if k in valid_keys}
+        
+        # Ensure required fields
+        if "channel_messages" not in filtered:
+            filtered["channel_messages"] = []
+        if "meta" not in filtered:
+            filtered["meta"] = {}
+
+        return NotificationOutput(**filtered)
 
     def format_channel_message(self, message_data: Dict[str, Any]) -> str:
         """
         Format a notification message for the specified channel.
         """
         channel = message_data.get("channel", "console")
+        # Map 'text' from prompt to 'message' for internal formatting if needed, 
+        # or just use 'text' directly.
+        message = message_data.get("text", message_data.get("message", ""))
+        
+        # Optional fields that might not be in the simple prompt schema but could be added later
         priority = message_data.get("priority", "info")
         title = message_data.get("title", "System Notification")
-        message = message_data.get("message", "")
         actions = message_data.get("actions", [])
         metadata = message_data.get("metadata", {})
 
@@ -131,11 +132,6 @@ class LLMNotificationAgent:
         if actions:
             slack_msg += "\n\n*Recommended Actions:*\n" + "\n".join(f"• {action}" for action in actions)
 
-        if metadata:
-            alert_count = metadata.get("alert_count", 0)
-            breakdown = metadata.get("severity_breakdown", {})
-            slack_msg += f"\n\n*Summary:* {alert_count} alerts ({breakdown})"
-
         return slack_msg
 
     def _format_email_message(self, priority: str, title: str, message: str,
@@ -156,12 +152,6 @@ class LLMNotificationAgent:
             for i, action in enumerate(actions, 1):
                 email_msg += f"{i}. {action}\n"
             email_msg += "\n"
-
-        if metadata:
-            alert_count = metadata.get("alert_count", 0)
-            breakdown = metadata.get("severity_breakdown", {})
-            email_msg += f"Alert Summary: {alert_count} total alerts\n"
-            email_msg += f"Severity Breakdown: {breakdown}\n"
 
         return email_msg
 
@@ -184,12 +174,6 @@ class LLMNotificationAgent:
             for i, action in enumerate(actions, 1):
                 console_msg += f"  {i}. {action}\n"
             console_msg += "\n"
-
-        if metadata:
-            alert_count = metadata.get("alert_count", 0)
-            breakdown = metadata.get("severity_breakdown", {})
-            console_msg += f"Alert Summary: {alert_count} total alerts\n"
-            console_msg += f"Severity Breakdown: {breakdown}\n"
 
         console_msg += f"{border}\n"
         return console_msg

@@ -17,8 +17,7 @@ import logging
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
-from agents.data.macro_data_agent import MacroDataAgent
-from agents.data.commodity_data_agent import CommodityDataAgent
+from .macro_data_agent import MacroDataAgent
 
 logger = logging.getLogger(__name__)
 
@@ -37,8 +36,7 @@ class RegimeAgent:
         """Initialize the regime detection agent."""
         self.config_path = Path(project_root) / config_path
         self.macro_agent = MacroDataAgent()
-        self.commodity_agent = CommodityDataAgent()
-
+        
         # Default regime thresholds
         self.regime_thresholds = {
             'rates': {
@@ -57,34 +55,45 @@ class RegimeAgent:
 
         # Load custom config if exists
         if self.config_path.exists():
-            with open(self.config_path, 'r') as f:
-                custom_config = yaml.safe_load(f)
-                self.regime_thresholds.update(custom_config.get('thresholds', {}))
+            try:
+                with open(self.config_path, 'r') as f:
+                    custom_config = yaml.safe_load(f)
+                    if custom_config and 'thresholds' in custom_config:
+                        self.regime_thresholds.update(custom_config.get('thresholds', {}))
+            except Exception as e:
+                logger.warning(f"Failed to load regime config: {e}")
 
         logger.info("RegimeAgent initialized with thresholds: %s", self.regime_thresholds)
 
-    def detect_regime(self, target_date: str) -> Dict[str, str]:
+    def detect_regime(self, target_date: str, macro_data: Optional[Dict[str, pd.DataFrame]] = None) -> Dict[str, str]:
         """
         Detect current market regime based on data up to target_date.
 
         Args:
             target_date: Date string in YYYY-MM-DD format
+            macro_data: Optional pre-fetched macro data. If None, will fetch.
 
         Returns:
             Dictionary with regime classifications for each category
         """
         target_dt = pd.to_datetime(target_date)
+        
+        # Fetch data if not provided
+        if macro_data is None:
+            # Fetch 60 days of history to ensure we have enough for trends
+            start_date = (target_dt - timedelta(days=60)).strftime('%Y-%m-%d')
+            macro_data = self.macro_agent.collect_macro_data(start_date, target_date)
 
         regimes = {}
 
         # Interest Rate Regime
-        regimes['rate_regime'] = self._detect_rate_regime(target_dt)
+        regimes['rate_regime'] = self._detect_rate_regime(target_dt, macro_data)
 
         # Oil Regime
-        regimes['oil_regime'] = self._detect_oil_regime(target_dt)
+        regimes['oil_regime'] = self._detect_oil_regime(target_dt, macro_data)
 
         # Gold Regime
-        regimes['gold_regime'] = self._detect_gold_regime(target_dt)
+        regimes['gold_regime'] = self._detect_gold_regime(target_dt, macro_data)
 
         # Seasonal Regime
         regimes['seasonal_regime'] = self._detect_seasonal_regime(target_dt)
@@ -92,20 +101,31 @@ class RegimeAgent:
         logger.info("Detected regimes for %s: %s", target_date, regimes)
         return regimes
 
-    def _detect_rate_regime(self, target_date: pd.Timestamp) -> str:
+    def _detect_rate_regime(self, target_date: pd.Timestamp, macro_data: Dict[str, pd.DataFrame]) -> str:
         """Detect interest rate regime."""
         try:
-            # Load Fed Funds Rate data
-            fed_data = self.macro_agent.load_macro_series('fed_funds_rate')
-            if fed_data.empty:
+            # Use fed_funds or treasury_10y as proxy if fed_funds missing
+            if 'fed_funds' in macro_data:
+                data = macro_data['fed_funds']
+                col = 'fed_funds'
+            elif 'treasury_10y' in macro_data:
+                data = macro_data['treasury_10y']
+                col = 'treasury_10y'
+            else:
+                return 'unknown'
+
+            if data.empty:
                 return 'unknown'
 
             # Get latest rate before target date
-            recent_data = fed_data[fed_data.index <= target_date]
+            recent_data = data[data.index <= target_date]
             if recent_data.empty:
                 return 'unknown'
 
-            current_rate = recent_data.iloc[-1]['fed_funds_rate'] / 100.0  # Convert from percent
+            # yfinance returns rates as percent (e.g. 4.5 for 4.5%), convert to decimal
+            # Check if it's already decimal or percent. Usually ^IRX is percent.
+            val = recent_data.iloc[-1][col]
+            current_rate = val / 100.0 if val > 0.2 else val # Heuristic: if > 0.2 likely percent (20%)
 
             if current_rate > self.regime_thresholds['rates']['high']:
                 return 'high_rates'
@@ -118,25 +138,31 @@ class RegimeAgent:
             logger.error("Error detecting rate regime: %s", e)
             return 'unknown'
 
-    def _detect_oil_regime(self, target_date: pd.Timestamp) -> str:
+    def _detect_oil_regime(self, target_date: pd.Timestamp, macro_data: Dict[str, pd.DataFrame]) -> str:
         """Detect oil price regime."""
         try:
-            # Load WTI Oil data
-            oil_data = self.commodity_agent.load_commodity_series('wti_crude')
-            if oil_data.empty:
+            if 'oil' not in macro_data:
+                return 'unknown'
+                
+            data = macro_data['oil']
+            if data.empty:
                 return 'unknown'
 
             # Get data for last 30 days before target date
             end_date = target_date
             start_date = end_date - timedelta(days=30)
-            recent_data = oil_data[(oil_data.index >= start_date) & (oil_data.index <= end_date)]
+            recent_data = data[(data.index >= start_date) & (data.index <= end_date)]
 
             if len(recent_data) < 2:
                 return 'unknown'
 
             # Calculate price change over the period
-            start_price = recent_data.iloc[0]['wti_crude_close']
-            end_price = recent_data.iloc[-1]['wti_crude_close']
+            start_price = recent_data.iloc[0]['oil']
+            end_price = recent_data.iloc[-1]['oil']
+            
+            if start_price == 0:
+                return 'unknown'
+                
             price_change = (end_price - start_price) / start_price
 
             if price_change > self.regime_thresholds['oil']['spike']:
@@ -150,25 +176,31 @@ class RegimeAgent:
             logger.error("Error detecting oil regime: %s", e)
             return 'unknown'
 
-    def _detect_gold_regime(self, target_date: pd.Timestamp) -> str:
+    def _detect_gold_regime(self, target_date: pd.Timestamp, macro_data: Dict[str, pd.DataFrame]) -> str:
         """Detect gold price regime."""
         try:
-            # Load Gold data
-            gold_data = self.commodity_agent.load_commodity_series('gold_spot')
-            if gold_data.empty:
+            if 'gold' not in macro_data:
+                return 'unknown'
+                
+            data = macro_data['gold']
+            if data.empty:
                 return 'unknown'
 
             # Get data for last 30 days before target date
             end_date = target_date
             start_date = end_date - timedelta(days=30)
-            recent_data = gold_data[(gold_data.index >= start_date) & (gold_data.index <= end_date)]
+            recent_data = data[(data.index >= start_date) & (data.index <= end_date)]
 
             if len(recent_data) < 2:
                 return 'unknown'
 
             # Calculate price change over the period
-            start_price = recent_data.iloc[0]['gold_spot_close']
-            end_price = recent_data.iloc[-1]['gold_spot_close']
+            start_price = recent_data.iloc[0]['gold']
+            end_price = recent_data.iloc[-1]['gold']
+            
+            if start_price == 0:
+                return 'unknown'
+                
             price_change = (end_price - start_price) / start_price
 
             if price_change > self.regime_thresholds['gold']['rally']:
