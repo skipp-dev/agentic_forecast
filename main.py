@@ -34,6 +34,7 @@ from src.nodes.execution_nodes import (
     feature_engineering_node,
     forecasting_node
 )
+from src.nodes.macro_nodes import macro_data_node, regime_detection_node
 from src.nodes.hpo_nodes import hpo_node
 from src.nodes.agent_nodes import analytics_node
 from src.nodes.monitoring_nodes import monitoring_node
@@ -262,6 +263,8 @@ def main():
 
         # Add nodes
         workflow.add_node("data_ingestion", data_ingestion_node)
+        workflow.add_node("macro_data", macro_data_node)
+        workflow.add_node("regime_detection", regime_detection_node)
         workflow.add_node("feature_engineering", feature_engineering_node)
         workflow.add_node("hpo", hpo_node)
         workflow.add_node("forecasting", forecasting_node)
@@ -273,7 +276,9 @@ def main():
 
         # Define edges
         workflow.set_entry_point("data_ingestion")
-        workflow.add_edge("data_ingestion", "feature_engineering")
+        workflow.add_edge("data_ingestion", "macro_data")
+        workflow.add_edge("macro_data", "regime_detection")
+        workflow.add_edge("regime_detection", "feature_engineering")
         
         # Conditional routing after feature engineering
         workflow.add_conditional_edges(

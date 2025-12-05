@@ -18,6 +18,26 @@ def strategy_node(state: PipelineGraphState) -> PipelineGraphState:
     # Initialize Strategy Agent
     strategy_agent = StrategySelectionAgent(config=state.get('config', {}))
     
+    # Get current regimes
+    regimes_data = state.get('regimes', {})
+    current_regimes = {}
+    if regimes_data:
+        try:
+            # Extract the latest regime for each type
+            for regime_type, regime_series in regimes_data.items():
+                if isinstance(regime_series, pd.Series) and not regime_series.empty:
+                    current_regimes[regime_type] = str(regime_series.iloc[-1])
+                elif isinstance(regime_series, str):
+                    current_regimes[regime_type] = regime_series
+        except Exception as e:
+            logger.warning(f"Error extracting current regimes: {e}")
+
+    # Select strategies based on regimes
+    selected_strategies = strategy_agent.select_strategies(current_regimes=current_regimes)
+    best_strategy = selected_strategies[0] if selected_strategies else None
+    strategy_name = best_strategy['name'] if best_strategy else "momentum_growth"
+    logger.info(f"Selected Strategy: {strategy_name} (Regimes: {current_regimes})")
+    
     signals = {}
     
     for symbol, model_forecasts in forecasts.items():
@@ -152,9 +172,8 @@ def strategy_node(state: PipelineGraphState) -> PipelineGraphState:
             # Calculate expected return
             expected_return = (predicted_price - last_close) / last_close
             
-            # Select Strategy (Placeholder for complex selection logic)
-            # In Phase 2, we'd use regime info here
-            strategy_name = "momentum_growth" # Default
+            # Select Strategy
+            # strategy_name is determined at the node level based on macro regimes
             
             # Generate Signal
             signal = "HOLD"

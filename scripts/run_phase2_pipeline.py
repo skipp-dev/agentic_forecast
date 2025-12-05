@@ -17,9 +17,9 @@ from datetime import datetime, timedelta
 # Add the project root to the path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from agents.macro_data_agent import MacroDataAgent
-from agents.regime_detection_agent import RegimeDetectionAgent
-from agents.strategy_selection_agent import StrategySelectionAgent
+from src.agents.macro_data_agent import MacroDataAgent
+from src.agents.regime_detection_agent import RegimeDetectionAgent
+from src.agents.strategy_selection_agent import StrategySelectionAgent
 
 def setup_logging(log_level=logging.INFO):
     """Setup logging configuration"""

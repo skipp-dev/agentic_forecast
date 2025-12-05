@@ -15,6 +15,8 @@ class PipelineGraphState(TypedDict):
     # Data artifacts
     data: Dict[str, pd.DataFrame]  # Map symbol -> DataFrame (raw/processed)
     features: Dict[str, pd.DataFrame] # Map symbol -> DataFrame with features
+    macro_data: Dict[str, Any] # Macro economic data
+    regimes: Dict[str, Any] # Market regimes
     
     # Model artifacts
     best_models: Dict[str, Dict[str, Any]] # Map symbol -> model_config/params

@@ -1,14 +1,14 @@
 import logging
 import pandas as pd
 from datetime import datetime, timedelta
-from ..graphs.state import GraphState
-from ..agents.macro_data_agent import MacroDataAgent
-from ..agents.regime_agent import RegimeAgent
-from ..agents.regime_detection_agent import RegimeDetectionAgent
+from src.core.state import PipelineGraphState
+from src.agents.macro_data_agent import MacroDataAgent
+from src.agents.regime_agent import RegimeAgent
+from src.agents.regime_detection_agent import RegimeDetectionAgent
 
 logger = logging.getLogger(__name__)
 
-def macro_data_node(state: GraphState) -> GraphState:
+def macro_data_node(state: PipelineGraphState) -> PipelineGraphState:
     """
     Fetches macro economic and commodity data.
     """
@@ -40,7 +40,7 @@ def macro_data_node(state: GraphState) -> GraphState:
         
     return state
 
-def regime_detection_node(state: GraphState) -> GraphState:
+def regime_detection_node(state: PipelineGraphState) -> PipelineGraphState:
     """
     Detects market regimes based on macro data.
     """
