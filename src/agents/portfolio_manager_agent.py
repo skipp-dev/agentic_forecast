@@ -141,3 +141,75 @@ class PortfolioManagerAgent:
             risk_status=risk_assessment.get('reason', 'OK'),
             risk_events=generated_events
         )
+
+    def construct_portfolio_from_signals(self, signals: Dict[str, Dict], raw_data: Dict[str, pd.DataFrame]) -> PortfolioAllocation:
+        """
+        Construct a target portfolio based on trading signals (Phase 2 output).
+        
+        Args:
+            signals: Dict mapping symbol to signal details (signal, confidence, etc.)
+            raw_data: Historical data for risk calculation
+        """
+        logger.info("Constructing portfolio from signals...")
+        
+        # 0. Kill Switch Check
+        if not self.registry.get_trading_status():
+            logger.critical("KILL SWITCH ACTIVE: Trading is disabled globally.")
+            return PortfolioAllocation(
+                target_weights={},
+                risk_metrics={},
+                risk_status='KILL_SWITCH_ACTIVE',
+                risk_events=[
+                    asdict(portfolio_rejection_event(
+                        reason="Kill Switch Active",
+                        details={'message': "Trading disabled by administrator"}
+                    ))
+                ]
+            )
+
+        target_weights = {}
+        generated_events = []
+        
+        # Filter for BUY signals
+        buy_signals = {s: info for s, info in signals.items() if info.get('signal') == 'BUY'}
+        
+        if not buy_signals:
+            logger.info("No BUY signals found. Going to cash.")
+            return PortfolioAllocation(target_weights={}, risk_metrics={}, risk_status='APPROVED', risk_events=[])
+
+        # Calculate raw weights based on confidence
+        total_score = 0.0
+        for symbol, info in buy_signals.items():
+            confidence = info.get('confidence', 0.5)
+            # Simple linear weighting by confidence
+            weight = confidence
+            target_weights[symbol] = weight
+            total_score += weight
+            
+        # Normalize weights
+        if total_score > 0:
+            scale_factor = (1.0 - self.target_cash) / total_score
+            for s in target_weights:
+                target_weights[s] = min(target_weights[s] * scale_factor, self.max_position_size)
+        
+        # Risk Check
+        risk_assessment = self.risk_agent.assess_portfolio_risk(target_weights, raw_data)
+        
+        if not risk_assessment['risk_approved']:
+            logger.warning(f"Portfolio rejected by Risk Agent: {risk_assessment.get('reason')}")
+            return PortfolioAllocation(
+                target_weights={},
+                risk_metrics=risk_assessment.get('metrics', {}),
+                risk_status='REJECTED',
+                risk_events=[asdict(portfolio_rejection_event(
+                    reason=risk_assessment.get('reason', 'Unknown Risk'),
+                    details=risk_assessment.get('metrics', {})
+                ))]
+            )
+
+        return PortfolioAllocation(
+            target_weights=target_weights,
+            risk_metrics=risk_assessment.get('metrics', {}),
+            risk_status='APPROVED',
+            risk_events=generated_events
+        )

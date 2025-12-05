@@ -48,3 +48,7 @@ class PipelineGraphState(TypedDict):
     
     # Strategy artifacts
     signals: Dict[str, Any] # Map symbol -> trading signal details
+    
+    # Portfolio artifacts
+    portfolio: Dict[str, float] # Map symbol -> target weight
+    orders: List[Dict[str, Any]] # List of orders to execute

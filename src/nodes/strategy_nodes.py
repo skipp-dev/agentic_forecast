@@ -35,7 +35,7 @@ def strategy_node(state: PipelineGraphState) -> PipelineGraphState:
     # Select strategies based on regimes
     selected_strategies = strategy_agent.select_strategies(current_regimes=current_regimes)
     best_strategy = selected_strategies[0] if selected_strategies else None
-    strategy_name = best_strategy['name'] if best_strategy else "momentum_growth"
+    strategy_name = best_strategy['strategy_name'] if best_strategy else "momentum_growth"
     logger.info(f"Selected Strategy: {strategy_name} (Regimes: {current_regimes})")
     
     signals = {}
