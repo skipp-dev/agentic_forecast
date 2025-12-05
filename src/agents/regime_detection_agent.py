@@ -17,6 +17,8 @@ from datetime import datetime
 from typing import Dict, List, Optional, Any
 from sklearn.cluster import KMeans
 from sklearn.preprocessing import StandardScaler
+from typing import Dict, List, Optional, Any, Union
+from ..utils.time_machine import TimeMachine
 
 # Add paths for imports
 sys.path.append(os.path.dirname(__file__))
@@ -58,12 +60,13 @@ class RegimeDetectionAgent:
             }
         }
 
-    def detect_regimes(self, macro_features: pd.DataFrame) -> Dict[str, pd.Series]:
+    def detect_regimes(self, macro_features: pd.DataFrame, cutoff_date: Optional[Union[str, pd.Timestamp]] = None) -> Dict[str, pd.Series]:
         """
         Detect market regimes from macro features.
 
         Args:
             macro_features: DataFrame with macro economic features
+            cutoff_date: Optional cutoff date to enforce point-in-time correctness.
 
         Returns:
             Dictionary of regime classifications
@@ -73,6 +76,19 @@ class RegimeDetectionAgent:
         if macro_features.empty:
             logger.warning("No macro features provided for regime detection")
             return {}
+
+        # Enforce point-in-time correctness
+        if cutoff_date:
+            tm = TimeMachine(macro_features)
+            # We don't need lookback_days here because we want all history up to cutoff
+            # to generate the full series of regimes up to that point.
+            # However, if we are generating historical regimes, we want the regimes for the *past*
+            # to be calculated as if we were at that point in the past?
+            # No, detect_regimes is rule-based (row-wise). So as long as the input data
+            # doesn't contain future rows, we are fine.
+            # The features themselves (e.g. pct_change) are backward looking.
+            macro_features = tm.get_data_as_of(cutoff_date)
+            logger.info(f"Applied cutoff date {cutoff_date} to macro features. Rows: {len(macro_features)}")
 
         regimes = {}
 
@@ -111,13 +127,20 @@ class RegimeDetectionAgent:
 
         return regime_labels
 
-    def detect_clustered_regimes(self, macro_features: pd.DataFrame, n_clusters: int = 4) -> pd.Series:
+    def detect_clustered_regimes(self, macro_features: pd.DataFrame, n_clusters: int = 4, cutoff_date: Optional[Union[str, pd.Timestamp]] = None) -> pd.Series:
         """
         Use unsupervised clustering to detect market regimes.
+        
+        WARNING: This method fits on the provided dataset. If used for historical backtesting,
+        it must be used in a rolling/expanding window fashion to avoid look-ahead bias.
+        Currently, it enforces a cutoff_date if provided, but fitting on the whole history up to cutoff
+        and then using those labels for the past is still technically a form of leakage 
+        (future data influencing past cluster centers).
 
         Args:
             macro_features: Macro features DataFrame
             n_clusters: Number of regime clusters to identify
+            cutoff_date: Optional cutoff date.
 
         Returns:
             Series with cluster labels as regime indicators
@@ -126,6 +149,12 @@ class RegimeDetectionAgent:
 
         if macro_features.empty:
             return pd.Series()
+
+        # Enforce point-in-time correctness
+        if cutoff_date:
+            tm = TimeMachine(macro_features)
+            macro_features = tm.get_data_as_of(cutoff_date)
+            logger.info(f"Applied cutoff date {cutoff_date} to macro features for clustering.")
 
         # Select numeric columns for clustering
         numeric_cols = macro_features.select_dtypes(include=[np.number]).columns
@@ -136,6 +165,7 @@ class RegimeDetectionAgent:
         scaled_data = scaler.fit_transform(cluster_data)
 
         # Perform clustering
+        # TODO: Implement rolling/expanding window clustering for strict backtesting safety
         kmeans = KMeans(n_clusters=n_clusters, random_state=42, n_init=10)
         cluster_labels = kmeans.fit_predict(scaled_data)
 
@@ -147,6 +177,8 @@ class RegimeDetectionAgent:
         regime_series = regime_series.map(cluster_mapping)
 
         logger.info(f"Clustered regimes: {regime_series.value_counts().to_dict()}")
+        
+        return regime_series
 
         return regime_series
 

@@ -139,8 +139,9 @@ def detect_shock_days_from_volatility(returns: np.ndarray, window: int = 20, thr
         return np.zeros_like(returns, dtype=bool)
 
     # Calculate rolling mean and std
-    rolling_mean = pd.Series(returns).rolling(window=window, center=True).mean().fillna(method='bfill').fillna(method='ffill').values
-    rolling_std = pd.Series(returns).rolling(window=window, center=True).std().fillna(method='bfill').fillna(method='ffill').values
+    # Use center=False to avoid look-ahead bias even in evaluation
+    rolling_mean = pd.Series(returns).rolling(window=window, center=False).mean().fillna(method='ffill').values
+    rolling_std = pd.Series(returns).rolling(window=window, center=False).std().fillna(method='ffill').values
 
     # Avoid division by zero
     rolling_std = np.where(rolling_std == 0, 1e-8, rolling_std)

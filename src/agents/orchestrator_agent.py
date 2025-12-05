@@ -19,15 +19,16 @@ import logging
 sys.path.append(os.path.dirname(__file__))
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 
-from agents.supervisor_agent import SupervisorAgent
-from graphs.state import GraphState
+from .supervisor_agent import SupervisorAgent
+from src.core.state import PipelineGraphState as GraphState
 from src.gpu_services import get_gpu_services
-from src.data.model_registry import ModelRegistry
-from agents.hyperparameter_search_agent import HyperparameterSearchAgent
-from agents.drift_monitor_agent import DriftMonitorAgent
-from agents.feature_engineer_agent import FeatureEngineerAgent
-from agents.forecast_agent import ForecastAgent
-from agents.llm_reporting_agent import LLMReportingAgent
+from src.services.model_registry_service import ModelRegistryService
+from src.services.training_service import GPUTrainingService
+from .hyperparameter_search_agent import HyperparameterSearchAgent
+from .drift_monitor_agent import DriftMonitorAgent
+from .feature_engineer_agent import FeatureEngineerAgent
+from .forecast_agent import ForecastAgent
+from .reporting_agent import LLMReportingAgent
 
 logger = logging.getLogger(__name__)
 
@@ -46,8 +47,9 @@ class OrchestratorAgent(SupervisorAgent):
         # Initialize GPU services
         self.gpu_services = get_gpu_services()
         
-        # Initialize Model Registry
-        self.model_registry = ModelRegistry()
+        # Initialize Services
+        self.model_registry = ModelRegistryService()
+        self.training_service = GPUTrainingService(gpu_services=self.gpu_services, model_registry=self.model_registry)
 
         # Initialize advanced agents
         self.hyperparameter_agent = HyperparameterSearchAgent(gpu_services=self.gpu_services)
@@ -67,21 +69,118 @@ class OrchestratorAgent(SupervisorAgent):
         - Hyperparameter search decisions
         - Spectral feature analysis
         - Advanced drift detection
+        - Market regime analysis
+        - Performance-based alerting
         """
 
         # Check GPU status first
         gpu_status = self._check_gpu_status()
         if not gpu_status['available']:
             logger.warning("GPU not available, using CPU fallback")
-            state.error = "GPU not available"
+            state['error'] = "GPU not available"
 
-        # Enhanced decision making
+        # 1. Analyze Context (Regime, Performance, Drift)
+        analysis = self._analyze_context(state)
+        
+        # 2. Decision Tree based on Analysis
+        
+        # Critical Error Handling
+        if analysis.get('critical_error'):
+            logger.error(f"Critical error detected: {analysis['critical_error']}. Terminating workflow.")
+            return "end"
+
+        # Regime Change Handling
+        if analysis.get('regime_change_detected'):
+            logger.info("Regime change detected. Triggering strategy update/HPO.")
+            if not state.get('hpo_triggered') and not state.get('hpo_results'):
+                 state['hpo_triggered'] = True
+                 return "hpo"
+
+        # High Drift Handling
+        if analysis.get('drift_severity') == 'high':
+            logger.info("High drift detected. Mandating retraining.")
+            if not state.get('retrained_models'):
+                return "retrain"
+            
+        # Performance Drop Handling
+        if analysis.get('performance_drop'):
+            logger.info("Performance drop detected. Suggesting HPO.")
+            if not state.get('hpo_triggered') and not state.get('hpo_results'):
+                 state['hpo_triggered'] = True
+                 return "hpo"
+
+        # Enhanced decision making (calls parent logic for standard flow)
         next_action = self._advanced_decision_making(state)
 
         # GPU resource optimization
         self._optimize_gpu_resources(next_action, state)
 
         return next_action
+
+    def _analyze_context(self, state: GraphState) -> Dict[str, Any]:
+        """
+        Analyze the current state context to extract insights for decision making.
+        """
+        analysis = {
+            'critical_error': None,
+            'regime_change_detected': False,
+            'drift_severity': 'low',
+            'performance_drop': False
+        }
+
+        # Check for errors
+        if state.get('errors'):
+            # Simple check: if too many errors, flag as critical
+            if len(state['errors']) > 5:
+                analysis['critical_error'] = "Too many errors encountered"
+
+        # Check for Drift
+        drift_symbols = state.get('drift_detected', [])
+        if len(drift_symbols) > 0:
+            # If > 20% of symbols have drift, consider it high severity
+            total_symbols = len(state.get('symbols', [])) or 1
+            if len(drift_symbols) / total_symbols > 0.2:
+                analysis['drift_severity'] = 'high'
+            else:
+                analysis['drift_severity'] = 'medium'
+
+        # Check for Performance Drop
+        analytics = state.get('analytics_results', {})
+        # This assumes analytics_results structure. 
+        # If we have historical metrics, we could compare. 
+        # For now, check if any MAPE is > threshold (e.g., 5%)
+        for symbol, metrics in analytics.items():
+            # Handle nested structure if necessary. 
+            # Assuming metrics is dict-like.
+            if isinstance(metrics, dict):
+                # Check for 'mape' in various places
+                mape = metrics.get('mape')
+                if mape is None:
+                    # Try looking deeper if structure is complex
+                    # e.g. metrics['NLinear']['mape']
+                    for model_name, model_metrics in metrics.items():
+                        if isinstance(model_metrics, dict):
+                            m = model_metrics.get('mape')
+                            if m and m > 5.0: # 500% MAPE is huge, maybe 0.05? 
+                                # Wait, MAPE is usually percentage. 5% = 0.05 or 5.0?
+                                # Looking at logs: 'mape': 1.0418... (likely 1.04%)
+                                # Let's assume > 10.0 is bad.
+                                if m > 10.0:
+                                    analysis['performance_drop'] = True
+                                    break
+                elif mape > 10.0:
+                     analysis['performance_drop'] = True
+            
+            if analysis['performance_drop']:
+                break
+
+        # Check for Regime Change (Placeholder logic)
+        # In a real scenario, we'd check VIX or volatility metrics from 'features'
+        # For now, we can check if 'drift_severity' is high, which implies regime change
+        if analysis['drift_severity'] == 'high':
+            analysis['regime_change_detected'] = True
+
+        return analysis
 
     def _check_gpu_status(self) -> Dict[str, Any]:
         """Check GPU availability and status."""
@@ -137,14 +236,14 @@ class OrchestratorAgent(SupervisorAgent):
         """Determine if spectral features should be used."""
         # Logic to decide when to use spectral features
         # For now, use for volatile symbols or when requested
-        return hasattr(state, 'use_spectral') and state.use_spectral
+        return state.get('use_spectral', False)
 
     def _should_run_hyperparameter_search(self, state: GraphState) -> bool:
         """Determine if hyperparameter search should be run."""
         # Run HPO if no recent search or performance is poor
         
         # Check explicit flag first
-        if hasattr(state, 'run_hpo') and state.run_hpo:
+        if state.get('run_hpo', False):
             return True
             
         # Check age-based trigger
@@ -231,7 +330,7 @@ class OrchestratorAgent(SupervisorAgent):
 
         logger.info(f"Analyzing spectral drift for {symbol}")
 
-        return self.drift_monitor_agent.monitor_performance(symbol)
+        return self.drift_monitor_agent.comprehensive_drift_check(symbol)
 
     def trigger_comprehensive_report(self, state_data: Dict[str, Any]) -> Dict[str, Any]:
         """Trigger comprehensive LLM-powered reporting with continuous learning feedback."""
@@ -242,7 +341,7 @@ class OrchestratorAgent(SupervisorAgent):
 
         try:
             # Convert state data to ReportingInput format
-            from agents.llm_reporting_agent import ReportingInput
+            from agents.reporting_agent import ReportingInput
 
             report_input = ReportingInput(
                 analytics_summary=state_data.get('analytics_summary', {}),

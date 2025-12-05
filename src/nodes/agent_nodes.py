@@ -9,8 +9,15 @@ from ..agents.news_data_agent import NewsDataAgent
 from ..agents.portfolio_manager_agent import PortfolioManagerAgent
 from ..agents.llm_news_agent import LLMNewsFeatureAgent
 from ..agents.auto_documentation_agent import AutoDocumentationAgent, MetricsSnapshot
+from ..agents.market_calendar_agent import MarketCalendarAgent
 from ..features.news_analytics import detect_news_shock
 from ..data.cross_asset_features import CrossAssetFeatures
+from ..reporting.run_health import compute_run_health
+try:
+    from ..risk.events import add_risk_event
+except ImportError:
+    from src.risk.events import add_risk_event
+
 import sys
 import os
 sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..'))
@@ -72,20 +79,76 @@ def feature_agent_node(state: GraphState) -> GraphState:
         
         # Process all symbols in the raw_data dictionary
         features = {}
+        features_dfs = {} # Temporary storage for cross-asset calculation
+        cutoff_date = state.get('cutoff_date')
+        
+        # 1. Generate base features
         for symbol, data in state['raw_data'].items():
             try:
-                features_df = agent.engineer_features_for_symbol(symbol, data, experiment="default")
+                features_df = agent.engineer_features_for_symbol(symbol, data, experiment="default", cutoff_date=cutoff_date)
+                logger.info(f"Features before news/regime merge for {symbol}: {features_df.columns.tolist()}")
                 features_df = merge_news(features_df, symbol)
 
-                # Convert DataFrame to serializable format for LangSmith tracing
-                features_df.index = features_df.index.astype(str)
-                features[symbol] = features_df.to_dict('index')
-                logger.info(f"Generated {features_df.shape[1]} features for {symbol}")
+                # Merge historical regimes if available
+                historical_regimes = state.get('historical_regimes')
+                if historical_regimes:
+                    for regime_name, regime_dict in historical_regimes.items():
+                        try:
+                            # Convert dict to Series
+                            regime_series = pd.Series(regime_dict)
+                            regime_series.index = pd.to_datetime(regime_series.index)
+                            regime_series.name = regime_name
+                            
+                            # Join with features_df
+                            features_df = features_df.join(regime_series, how='left')
+                            
+                            # Forward fill
+                            features_df[regime_name] = features_df[regime_name].ffill().fillna('unknown')
+                            
+                            # One-Hot Encode
+                            dummies = pd.get_dummies(features_df[regime_name], prefix=regime_name)
+                            dummies = dummies.astype(int)
+                            features_df = pd.concat([features_df, dummies], axis=1)
+                            features_df.drop(columns=[regime_name], inplace=True)
+                        except Exception as e:
+                            logger.warning(f"Failed to merge regime {regime_name} for {symbol}: {e}")
+                
+                logger.info(f"Features after merge for {symbol}: {features_df.columns.tolist()}")
+                features_dfs[symbol] = features_df
+
             except Exception as e:
                 logger.error(f"Failed to generate features for {symbol}: {e}")
                 # Fall back to original data if feature engineering fails
-                data.index = data.index.astype(str)
-                features[symbol] = data.to_dict('index')
+                features_dfs[symbol] = data.copy()
+
+        # 2. Add Cross-Asset Features
+        try:
+            # Use FeatureAgent's method
+            fa = FeatureAgent()
+            features_dfs = fa._add_cross_asset_features(features_dfs)
+            logger.info("Added cross-asset features")
+        except Exception as e:
+            logger.warning(f"Failed to add cross-asset features: {e}")
+
+        # 3. Convert to state format
+        for symbol, features_df in features_dfs.items():
+            try:
+                # Convert DataFrame to serializable format for LangSmith tracing
+                features_df.index = features_df.index.astype(str)
+                logger.info(f"Features DF shape for {symbol}: {features_df.shape}")
+                features_dict = features_df.to_dict('index')
+                features[symbol] = features_dict
+                logger.info(f"Generated {features_df.shape[1]} features for {symbol}")
+                
+                # Debug logging
+                import json
+                try:
+                    first_key = next(iter(features_dict))
+                    logger.info(f"First item in features dict for {symbol}: Key={first_key}, Value keys={list(features_dict[first_key].keys())}")
+                except StopIteration:
+                    logger.error(f"Features dict for {symbol} is empty!")
+            except Exception as e:
+                logger.error(f"Failed to convert features for {symbol}: {e}")
 
         state['features'] = features
         return state
@@ -97,7 +160,8 @@ def feature_agent_node(state: GraphState) -> GraphState:
         features = agent.generate_features(
             state['raw_data'],
             macro_data=state.get('macro_data'),
-            regimes=state.get('regimes')
+            regimes=state.get('regimes'),
+            historical_regimes=state.get('historical_regimes')
         )
         
         # Merge news features for fallback path too
@@ -244,84 +308,92 @@ def guardrail_agent_node(state: GraphState, config: dict) -> GraphState:
     logger.debug(f"Guardrail returning state with keys: {list(state.keys())}")
     return state
 
-# from ..agents.explainability_agent import ExplainabilityAgent
+from ..agents.explainability_agent import ExplainabilityAgent
 
 # Conditional import for ModelZoo to avoid neuralforecast imports in BACKTEST mode
 if not _SKIP_LLM_AGENTS:
     from models.model_zoo import ModelZoo
 
-# def explainability_agent_node(state: GraphState) -> GraphState:
-#     """
-#     Runs the explainability agent to generate SHAP values for the best models.
-#     """
-#     logger.info("--- Node: Explainability Agent ---")
-#     logger.debug(f"Explainability node called with state keys: {list(state.keys())}")
-#     logger.debug(f"Best models available: {list(state.get('best_models', {}).keys())}")
+def explainability_agent_node(state: GraphState) -> GraphState:
+    """
+    Runs the explainability agent to generate SHAP values for the best models.
+    """
+    logger.info("--- Node: Explainability Agent ---")
+    logger.debug(f"Explainability node called with state keys: {list(state.keys())}")
+    logger.debug(f"Best models available: {list(state.get('best_models', {}).keys())}")
     
-#     try:
-#         # Import here to ensure availability
-#         from neuralforecast import NeuralForecast
-#         from neuralforecast.models import NLinear
-#         import numpy as np
+    try:
+        # Import here to ensure availability
+        from neuralforecast import NeuralForecast
+        from neuralforecast.models import NLinear
+        import numpy as np
         
-#         best_models = state.get('best_models', {})
-#         if not best_models:
-#             logger.info("No best models selected, skipping explainability.")
-#             return state
+        best_models = state.get('best_models', {})
+        if not best_models:
+            logger.info("No best models selected, skipping explainability.")
+            return state
 
-#         model_zoo = ModelZoo()
-#         shap_results = {}
+        model_zoo = ModelZoo()
+        shap_results = {}
         
-#         for symbol, model_info in best_models.items():
-#             model_id = model_info.get('model_id')
-#             model_family = model_info.get('model_family', 'BaselineLinear')
+        for symbol, model_info in best_models.items():
+            model_id = model_info.get('model_id')
+            model_family = model_info.get('model_family', 'BaselineLinear')
             
-#             try:
-#                 # Get features for this symbol first
-#                 symbol_features = state['features'][symbol]
+            try:
+                # Get features for this symbol first
+                symbol_features = state['features'][symbol]
+                # Convert dict to DataFrame if needed
+                if isinstance(symbol_features, dict):
+                     symbol_features = pd.DataFrame.from_dict(symbol_features, orient='index')
                 
-#                 if model_id:
-#                     # Load the trained model
-#                     nf_model = model_zoo.load_model(model_id)
-#                 else:
-#                     # Create a fallback model for explainability
-#                     logger.info(f"No trained model for {symbol}, using fallback for SHAP analysis.")
-#                     # For fallback, we'll create a simple sklearn model that can be explained
-#                     from sklearn.linear_model import LinearRegression
-#                     model = LinearRegression()
+                nf_model = None
+                if model_id:
+                    # Load the trained model
+                    try:
+                        nf_model = model_zoo.load_model(model_id)
+                    except Exception as e:
+                        logger.warning(f"Could not load model {model_id}: {e}")
+                
+                if nf_model is None:
+                    # Create a fallback model for explainability
+                    logger.info(f"No trained model for {symbol}, using fallback for SHAP analysis.")
+                    # For fallback, we'll create a simple sklearn model that can be explained
+                    from sklearn.linear_model import LinearRegression
+                    model = LinearRegression()
                     
-#                     # Fit the model on a small sample of the features data
-#                     sample_data = symbol_features.head(50).copy()  # Use more data for fitting
-#                     sample_data = sample_data.reset_index(drop=True)
-#                     sample_data['y'] = np.random.normal(100, 10, len(sample_data))  # Dummy target for fitting
-#                     # Use only numeric columns
-#                     numeric_cols = symbol_features.select_dtypes(include=[np.number]).columns
-#                     model.fit(sample_data[numeric_cols], sample_data['y'])
+                    # Fit the model on a small sample of the features data
+                    sample_data = symbol_features.head(50).copy()  # Use more data for fitting
+                    sample_data = sample_data.reset_index(drop=True)
+                    sample_data['y'] = np.random.normal(100, 10, len(sample_data))  # Dummy target for fitting
+                    # Use only numeric columns
+                    numeric_cols = symbol_features.select_dtypes(include=[np.number]).columns
+                    model.fit(sample_data[numeric_cols], sample_data['y'])
                     
-#                     model_family = 'LinearRegression'
-#                     nf_model = model
+                    model_family = 'LinearRegression'
+                    nf_model = model
                 
-#                 # Create explainability agent
-#                 numeric_cols = symbol_features.select_dtypes(include=[np.number]).columns
-#                 agent = ExplainabilityAgent(nf_model, model_family, numeric_cols.tolist())
+                # Create explainability agent
+                numeric_cols = symbol_features.select_dtypes(include=[np.number]).columns
+                agent = ExplainabilityAgent(nf_model, model_family, numeric_cols.tolist())
                 
-#                 # Generate SHAP explanations
-#                 shap_results[symbol] = agent.explain(symbol_features)
+                # Generate SHAP explanations
+                shap_results[symbol] = agent.explain(symbol_features)
                 
-#             except Exception as e:
-#                 logger.error(f"Error generating SHAP for {symbol}: {e}")
-#                 import traceback
-#                 traceback.print_exc()
-#                 continue
+            except Exception as e:
+                logger.error(f"Error generating SHAP for {symbol}: {e}")
+                import traceback
+                traceback.print_exc()
+                continue
 
-#         state['shap_results'] = shap_results
-#         logger.info("Generated SHAP explanations.")
-#         return state
-#     except Exception as e:
-#         logger.error(f"Critical error in explainability node: {e}")
-#         import traceback
-#         traceback.print_exc()
-#         return state
+        state['shap_results'] = shap_results
+        logger.info("Generated SHAP explanations.")
+        return state
+    except Exception as e:
+        logger.error(f"Critical error in explainability node: {e}")
+        import traceback
+        traceback.print_exc()
+        return state
 
 from ..agents.graph_construction_agent import GraphConstructionAgent
 
@@ -530,7 +602,14 @@ def llm_hpo_planning_node(state: GraphState) -> GraphState:
         
         # Prepare input data
         past_runs = []  # Could be populated from previous HPO results
-        performance_summary = state.get('analytics_summary', pd.DataFrame()).to_dict('records')
+        
+        analytics_summary = state.get('analytics_summary', [])
+        if isinstance(analytics_summary, pd.DataFrame):
+            performance_summary = analytics_summary.to_dict('records')
+        elif isinstance(analytics_summary, list):
+            performance_summary = analytics_summary
+        else:
+            performance_summary = []
         
         plan_input = HPOPlanInput(
             past_runs=past_runs,
@@ -687,7 +766,8 @@ def forecast_agent_node(state: GraphState) -> GraphState:
                     error_metrics=symbol_metrics,
                     regime_and_guardrail_info=regime_info
                 )
-                interpreted_forecasts[symbol] = interpretation
+                # Convert Pydantic model to dict for state storage
+                interpreted_forecasts[symbol] = interpretation.dict()
                 logger.info(f"Interpreted forecasts for {symbol}")
             except Exception as e:
                 logger.error(f"Failed to interpret forecasts for {symbol}: {e}")
@@ -730,12 +810,20 @@ def auto_documentation_node(state: GraphState) -> GraphState:
                 
         agent = AutoDocumentationAgent(llm_client, config.get('auto_documentation', {}))
         
+        # Calculate run health
+        risk_events = state.get('risk_events', [])
+        guardrail_log = state.get('guardrail_log', [])
+        health_status = compute_run_health(risk_events, guardrail_log)
+        state['run_health'] = health_status
+
         # Prepare snapshots
         metrics_snapshot = MetricsSnapshot(
             model_performance=state.get('analytics_summary', []),
             guardrail_counts=state.get('guardrail_log', []), # Simplified
             news_health=state.get('news_features', []), # Simplified
-            llm_usage={} # Not tracked yet
+            llm_usage={}, # Not tracked yet
+            risk_events=risk_events,
+            run_health=health_status
         )
         
         run_context = {
@@ -775,9 +863,201 @@ def portfolio_manager_node(state: GraphState, config: dict) -> GraphState:
         state.get('raw_data', {})
     )
     
-    state['target_portfolio'] = result['target_weights']
-    state['portfolio_risk'] = result['risk_metrics']
-    state['portfolio_status'] = result['risk_status']
+    # result is now PortfolioAllocation object
+    state['target_portfolio'] = result.target_weights
+    state['portfolio_risk'] = result.risk_metrics
+    state['portfolio_status'] = result.risk_status
     
-    logger.info(f"Constructed portfolio with {len(result['target_weights'])} assets. Status: {result['risk_status']}")
+    # Handle risk events
+    if result.risk_events:
+        for event_dict in result.risk_events:
+            # Manually append to state['risk_events'] since it's already a dict
+            events = list(state.get("risk_events", []))
+            events.append(event_dict)
+            state["risk_events"] = events
+            logger.info(f"Emitted risk event: {event_dict.get('type')} - {event_dict.get('message')}")
+
+    logger.info(f"Constructed portfolio with {len(result.target_weights)} assets. Status: {result.risk_status}")
+    return state
+
+def validate_portfolio_node(state: GraphState, config: dict) -> GraphState:
+    """
+    Runs the guardrail agent to validate the final portfolio allocation.
+    """
+    logger.info("--- Node: Validate Portfolio ---")
+    agent = GuardrailAgent(config.get('anomaly_detection', {}))
+    
+    target_portfolio = state.get('target_portfolio', {})
+    validation = agent.validate_portfolio(target_portfolio)
+    
+    if not validation['is_valid']:
+        logger.warning(f"Portfolio validation failed: {validation['reason']}")
+        state['target_portfolio'] = validation['safe_allocation']
+        
+        # Log the intervention
+        log = state.get('guardrail_log', [])
+        log.append(f"Portfolio Modified: {validation['reason']}")
+        state['guardrail_log'] = log
+        
+        # Add risk event
+        events = list(state.get("risk_events", []))
+        events.append({
+            "type": "PORTFOLIO_CONSTRAINT",
+            "severity": "HIGH",
+            "message": validation['reason'],
+            "timestamp": datetime.now().isoformat()
+        })
+        state["risk_events"] = events
+    else:
+        logger.info("Portfolio passed validation.")
+        
+    return state
+
+from ..agents.supervisor_agent import SupervisorAgent
+# Conditional import for ResearchAgent
+if not _SKIP_LLM_AGENTS:
+    from ..agents.research_agent import OpenAIResearchAgent
+
+def supervisor_node(state: GraphState, config: dict) -> GraphState:
+    """
+    Runs the supervisor agent to coordinate workflow.
+    """
+    logger.info("--- Node: Supervisor Agent ---")
+    agent = SupervisorAgent(config=config)
+    
+    # Initialize run_status if missing
+    if 'run_status' not in state:
+        state['run_status'] = 'RUNNING'
+        state['supervisor_iterations'] = 0
+        
+    # Increment iteration counter
+    state['supervisor_iterations'] = state.get('supervisor_iterations', 0) + 1
+    
+    # Max iteration guard
+    MAX_ITERATIONS = 20 # Should be enough for standard flows
+    if state['supervisor_iterations'] > MAX_ITERATIONS:
+        logger.error(f"Supervisor iteration limit ({MAX_ITERATIONS}) exceeded. Forcing termination.")
+        state['run_status'] = 'FAILED'
+        state['failure_reason'] = 'Supervisor iteration limit exceeded'
+        state['next_step'] = 'end'
+        return state
+        
+    # Check if already completed or failed
+    if state['run_status'] in ['COMPLETED', 'FAILED']:
+        state['next_step'] = 'end'
+        return state
+    
+    # Determine next step
+    next_step = agent.coordinate_workflow(state)
+    
+    # If coordinate_workflow returns 'end' or 'continue' (which usually means end in LangGraph if no edges match),
+    # we should mark as COMPLETED if not already FAILED
+    if next_step == 'end' and state['run_status'] == 'RUNNING':
+        state['run_status'] = 'COMPLETED'
+        
+    state['next_step'] = next_step
+    logger.info(f"Supervisor decided next step: {next_step} (Status: {state['run_status']}, Iteration: {state['supervisor_iterations']})")
+    return state
+
+def deep_research_node(state: GraphState) -> GraphState:
+    """
+    Runs the deep research agent to analyze low-confidence forecasts.
+    """
+    logger.info("--- Node: Deep Research Agent ---")
+    
+    if _SKIP_LLM_AGENTS:
+        logger.info("Skipping Deep Research in BACKTEST mode")
+        state['deep_research_conducted'] = True
+        return state
+
+    try:
+        # Lazy import if needed or use the one from top
+        if '_SKIP_LLM_AGENTS' in globals() and _SKIP_LLM_AGENTS:
+             return state
+
+        agent = OpenAIResearchAgent()
+        
+        # Gather context for research
+        # We focus on symbols with low confidence
+        # Note: 'interpreted_forecasts' stores the dict version of ForecastResult
+        interpreted_forecasts = state.get('interpreted_forecasts', {})
+        low_conf_symbols = []
+        
+        for symbol, forecast_result in interpreted_forecasts.items():
+            # forecast_result is a dict (ForecastResult.dict())
+            # It has 'horizon_forecasts' list
+            h_forecasts = forecast_result.get('horizon_forecasts', [])
+            for forecast in h_forecasts:
+                conf = forecast.get('confidence')
+                if conf == "Low":
+                    low_conf_symbols.append(symbol)
+                    break
+        
+        research_results = {}
+        for symbol in low_conf_symbols:
+            logger.info(f"Conducting deep research for {symbol}")
+            
+            # Prepare context
+            metrics = {
+                "forecasts": interpreted_forecasts.get(symbol),
+                "regime": state.get('regimes', {}).get(symbol),
+                # News features might be a list of dicts or DataFrame
+                "news": state.get('news_features', []) 
+            }
+            
+            # Run agent
+            result = agent.run(metrics, external_context=f"Focus on why forecast confidence is low for {symbol}")
+            research_results[symbol] = result
+            
+        state['deep_research_results'] = research_results
+        state['deep_research_conducted'] = True
+        
+    except Exception as e:
+        logger.error(f"Deep research failed: {e}")
+        # Mark as conducted to avoid loops
+        state['deep_research_conducted'] = True
+        
+    return state
+
+def market_calendar_node(state: GraphState) -> GraphState:
+    """
+    Checks market status and updates state.
+    """
+    logger.info("--- Node: Market Calendar ---")
+    agent = MarketCalendarAgent()
+    result = agent.check_market_status(state)
+    state.update(result)
+    return state
+
+def analytics_node(state: GraphState) -> GraphState:
+    """
+    Analyzes the forecasts and computes performance metrics.
+    """
+    logger.info("--- Node: Analytics Agent ---")
+    
+    forecasts = state.get('forecasts', {})
+    analytics_results = {}
+    
+    for symbol, symbol_forecasts in forecasts.items():
+        try:
+            summary = {}
+            for model_family, forecast_df in symbol_forecasts.items():
+                if not forecast_df.empty and model_family in forecast_df.columns:
+                    summary[model_family] = {
+                        'mean_forecast': float(forecast_df[model_family].mean()),
+                        'last_forecast': float(forecast_df[model_family].iloc[-1])
+                    }
+            
+            analytics_results[symbol] = summary
+            
+        except Exception as e:
+            logger.error(f"Error analyzing {symbol}: {e}")
+            
+    state['analytics_results'] = analytics_results
+    
+    # Also print a summary
+    logger.info("Analytics Summary:")
+    for symbol, res in analytics_results.items():
+        logger.info(f"  {symbol}: {res}")
+        
     return state

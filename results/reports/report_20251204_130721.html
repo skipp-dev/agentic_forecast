@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang='en'>
+<head>
+    <meta charset='UTF-8'>
+    <meta name='viewport' content='width=device-width, initial-scale=1.0'>
+    <title>System Forecasting Report</title>
+    <style>
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; margin: 0; padding: 20px; background-color: #f5f5f5; }
+        .container { max-width: 1200px; margin: 0 auto; background: white; padding: 30px; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+        h1 { color: #2c3e50; border-bottom: 3px solid #3498db; padding-bottom: 10px; }
+        h2 { color: #34495e; margin-top: 30px; border-left: 4px solid #3498db; padding-left: 15px; }
+        .executive-summary { background: #ecf0f1; padding: 20px; border-radius: 5px; margin: 20px 0; }
+        .section-box { background: #fff; border: 1px solid #ddd; padding: 15px; margin: 10px 0; border-radius: 5px; }
+        .risk-item { background: #fff3cd; padding: 10px; margin: 5px 0; border-radius: 3px; border-left: 4px solid #ffc107; }
+        .opp-item { background: #d4edda; padding: 10px; margin: 5px 0; border-radius: 3px; border-left: 4px solid #28a745; }
+        .action-item { background: #d1ecf1; padding: 15px; margin: 10px 0; border-radius: 5px; border-left: 4px solid #17a2b8; }
+        .timestamp { color: #6c757d; font-size: 0.9em; }
+    </style>
+</head>
+<body>
+    <div class='container'>
+        <h1>System Forecasting Report</h1>
+        <p class='timestamp'>Generated: 20251204_130721</p>
+        <h2>Executive Summary</h2>
+        <div class='executive-summary'>
+            <p>The latest run of the forecasting platform processed 576 symbols with a focus on high-performance optimization (HPO). Despite the completion of HPO, no significant performance improvements were observed, as indicated by an average performance of 0 and no top performers identified. Anomalies were detected in 573 patterns, signaling areas that require further investigation. The system passed all critical checks, allowing us to proceed, but the lack of performance metrics raises concerns about model effectiveness.</p>
+        </div>
+        <h2>Performance Overview</h2>
+        <p><em>Audience: mixed</em></p>
+        <div class='section-box'>
+            - **Total Symbols Processed**: 576<br>- **Models Evaluated**: 0<br>- **Average Performance**: 0<br>- **Anomalies Detected**: 573<br>- **HPO Completion**: Yes, but no performance improvements noted.
+        </div>
+        <h2>Detailed Analytics</h2>
+        <p><em>Audience: quants</em></p>
+        <div class='section-box'>
+            - **Top Performers**: None identified.<br>- **Risk Metrics**: Average volatility is 0, with no high-risk symbols.<br>- **Performance Summary**: No models evaluated and no significant insights from evaluation metrics.
+        </div>
+        <h2>HPO Insights</h2>
+        <p><em>Audience: ops</em></p>
+        <div class='section-box'>
+            - **Optimized Symbols**: AAPL, MSFT, NVDA.<br>- **Total Optimizations**: 3, with no improvement in MAPE for any symbol.<br>- **Next Priorities**: None identified.
+        </div>
+        <h2>Research Findings</h2>
+        <p><em>Audience: mixed</em></p>
+        <div class='section-box'>
+            - **Key Findings**: 573 anomalous patterns detected.<br>- **Market Implications**: Analysis completed with SHAP insights and anomaly detection, but no significant evaluation insights.
+        </div>
+        <h2>Guardrails and Health Summary</h2>
+        <p><em>Audience: mixed</em></p>
+        <div class='section-box'>
+            - **Total Checks**: 555<br>- **Passed Checks**: 0<br>- **Warnings**: 0<br>- **Critical Issues**: None, allowing us to proceed.
+        </div>
+        <h2>Key Risks</h2>
+        <div class='risk-item'>No performance improvements observed despite HPO completion.</div>
+        <div class='risk-item'>High number of anomalies detected indicates potential underlying issues.</div>
+        <h2>Key Opportunities</h2>
+        <div class='opp-item'>Investigate the 573 anomalous patterns for potential insights.</div>
+        <div class='opp-item'>Reassess model configurations to enhance performance metrics.</div>
+        <h2>Actions for Quants</h2>
+        <div class='action-item'>Conduct a deep dive analysis on the detected anomalies to identify root causes.</div>
+        <h2>Actions for Ops</h2>
+        <div class='action-item'>Review model configurations and consider adjustments to improve performance metrics.</div>
+    </div>
+</body>
+</html>

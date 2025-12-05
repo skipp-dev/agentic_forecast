@@ -27,6 +27,9 @@ class GraphState(TypedDict):
     
     # HPO results
     hpo_results: Dict[str, Any]
+    
+    # Time Travel
+    cutoff_date: str # Optional ISO date string for point-in-time simulation
 
     # SHAP explainability results
     shap_results: Dict[str, Dict[str, Any]]
@@ -44,10 +47,18 @@ class GraphState(TypedDict):
     hpo_triggered: bool
     drift_detected: bool
     run_type: str
+    
+    # Supervisor Control
+    run_status: str # INIT, RUNNING, COMPLETED, FAILED
+    supervisor_iterations: int
+    failure_reason: str
 
     # LLM & News Agents Outputs
     news_insights: Any
     market_sentiment: str
+    
+    # Market Calendar Status
+    market_status: Dict[str, Any]
     key_news: List[Dict[str, Any]]
     enriched_news: List[Dict[str, Any]]
     llm_analytics_summary: str

@@ -20,6 +20,8 @@ sys.path.append(os.path.dirname(__file__))
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 
 from agents.policy_optimizer import PolicyOptimizer
+from src.schemas import ForecastResult, HorizonForecast
+from src.services.model_registry_service import ModelRegistryService
 
 logger = logging.getLogger(__name__)
 
@@ -45,18 +47,20 @@ class ForecastAgent:
     human/trading decisions, providing structured insights with uncertainty quantification.
     """
 
-    def __init__(self, llm_client=None, config_path: str = "src/configs/model_families.yaml"):
+    def __init__(self, llm_client=None, config_path: str = "src/configs/model_families.yaml", model_registry: Optional[ModelRegistryService] = None):
         """
         Initialize the Forecast Agent.
 
         Args:
             llm_client: LLM client for generating narrative comments (optional)
             config_path: Path to model family policy configuration
+            model_registry: ModelRegistryService instance
         """
         self.llm_client = llm_client
         self.config_path = config_path
         self.config = self._load_config(config_path)
         self.policy_optimizer = PolicyOptimizer(default_policy=self.config)
+        self.model_registry = model_registry or ModelRegistryService()
         logger.info("Forecast Agent initialized")
 
     def update_policy_from_performance(self, performance_summary: List[Dict[str, Any]]) -> None:
@@ -134,8 +138,24 @@ class ForecastAgent:
         champion_family = "Unknown"
         final_prediction = 0.0
         metadata: Dict[str, Any] = {}
+
+        # 1. Check ModelRegistry for best model (Priority)
+        try:
+            best_model_meta = self.model_registry.get_best_model(symbol, metric='mae', mode='min')
+            if best_model_meta:
+                best_family = best_model_meta['model_type']
+                if best_family in available_forecasts:
+                    champion_family = best_family
+                    final_prediction = available_forecasts[champion_family]
+                    metadata['source'] = 'ModelRegistry'
+                    metadata['model_id'] = best_model_meta.get('model_id')
+                    metadata['best_metric'] = best_model_meta.get('metrics', {}).get('mae')
+                    metadata['selected_family'] = champion_family
+                    return final_prediction, champion_family, metadata
+        except Exception as e:
+            logger.warning(f"Failed to query ModelRegistry for {symbol}: {e}")
         
-        # Champion selection logic
+        # Champion selection logic (Fallback to Policy)
         if available_primary:
             # Pick best primary based on recent metrics if available, else first
             # For now, simple logic: pick first available primary
@@ -230,22 +250,18 @@ class ForecastAgent:
         forecasts: List[Dict[str, Any]],
         error_metrics: Dict[str, Any],
         regime_and_guardrail_info: Optional[Dict[str, Any]] = None
-    ) -> Dict[str, Any]:
+    ) -> ForecastResult:
         """
         Interpret forecasts and produce risk-aware JSON summary.
 
         Args:
             symbol: Stock symbol
             forecasts: List of forecast objects with horizon and predicted_return. 
-                       Note: This input format assumes pre-selected forecasts. 
-                       If we want to do selection here, we need the raw forecasts per family.
-                       However, the current pipeline seems to pass a list of forecasts where each might be from a different model?
-                       Let's assume 'forecasts' input here is a list of dicts, where each dict MIGHT have 'model_family'.
             error_metrics: Historical error metrics (MAE, MAPE, SMAPE, SWASE, directional_accuracy)
             regime_and_guardrail_info: Current regime flags and guardrail statuses
 
         Returns:
-            JSON structure with interpreted forecasts, confidence levels, and scenario notes
+            ForecastResult object with interpreted forecasts, confidence levels, and scenario notes
         """
         logger.info(f"Interpreting forecasts for {symbol}")
 
@@ -266,7 +282,7 @@ class ForecastAgent:
             forecasts_by_horizon[h][family] = f.get("predicted_return", 0.0)
 
         # Build horizon forecasts with confidence
-        horizon_forecasts = []
+        horizon_forecasts_objs = []
         
         # Iterate over horizons found in input
         for horizon, family_forecasts in forecasts_by_horizon.items():
@@ -292,14 +308,14 @@ class ForecastAgent:
                 horizon, predicted_return, confidence, regime_and_guardrail_info
             )
 
-            horizon_forecasts.append({
-                "horizon": horizon,
-                "predicted_return": predicted_return,
-                "confidence": confidence,
-                "comment": comment,
-                "selected_model_family": selected_family,
-                "selection_metadata": metadata
-            })
+            horizon_forecasts_objs.append(HorizonForecast(
+                horizon=horizon,
+                predicted_return=predicted_return,
+                confidence=confidence,
+                comment=comment,
+                selected_model_family=selected_family,
+                metadata=metadata
+            ))
 
         # Build risk assessment
         trust_score, trust_reasons = self._compute_trust_score(error_metrics, guardrail_flags)
@@ -317,26 +333,28 @@ class ForecastAgent:
         }
 
         # Generate scenario notes
-        scenario_notes = self._generate_scenario_notes(
-            symbol, horizon_forecasts, risk_assessment, regime_and_guardrail_info
+        scenario_notes_list = self._generate_scenario_notes(
+            symbol, [h.dict() for h in horizon_forecasts_objs], risk_assessment, regime_and_guardrail_info
         )
+        scenario_notes = "\n".join(scenario_notes_list)
 
-        result = {
-            "symbol": symbol,
-            "horizon_forecasts": horizon_forecasts,
-            "risk_assessment": risk_assessment,
-            "scenario_notes": scenario_notes
-        }
+        result = ForecastResult(
+            symbol=symbol,
+            valid_until=datetime.now().timestamp() + 86400, # 24h TTL default
+            horizon_forecasts=horizon_forecasts_objs,
+            risk_assessment=risk_assessment,
+            narrative_summary=scenario_notes
+        )
 
         # Save to Prometheus metrics file
         try:
             from services.metrics_exporter import save_forecast_agent_output
-            save_forecast_agent_output(result)
+            save_forecast_agent_output(result.dict())
         except Exception as e:
             logger.warning(f"Failed to save forecast agent output for Prometheus: {e}")
 
         # Log the full JSON output for audit/backtesting
-        self._log_forecast_output_for_audit(result)
+        self._log_forecast_output_for_audit(result.dict())
 
         return result
 
@@ -667,7 +685,7 @@ class ForecastAgent:
         }
         
         # Log as structured JSON
-        logger.info("forecast_agent_output %s", json.dumps(payload))
+        logger.info("forecast_agent_output %s", json.dumps(payload, default=str))
 
     def interpret_forecast_bundle(
         self,

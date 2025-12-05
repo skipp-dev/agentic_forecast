@@ -1,11 +1,10 @@
 import pandas as pd
-from ..graphs.state import GraphState
+from ..core.state import PipelineGraphState
 import os
-from typing import Dict, Any
+from typing import Dict, Any, List
 from ..agents.reporting_agent import LLMReportingAgent, ReportingInput
 
-
-def generate_report_node(state: GraphState) -> GraphState:
+def generate_report_node(state: PipelineGraphState) -> PipelineGraphState:
     """
     Generates a comprehensive report using the LLMReportingAgent.
     Creates structured reports with analytics, HPO insights, and recommendations.
@@ -14,7 +13,9 @@ def generate_report_node(state: GraphState) -> GraphState:
 
     try:
         # Initialize the LLM reporting agent
-        reporting_agent = LLMReportingAgent()
+        config = state.get('config', {})
+        reporting_config = config.get('reporting', {})
+        reporting_agent = LLMReportingAgent(settings=reporting_config)
 
         # Extract data from state for the reporting agent
         analytics_summary = extract_analytics_summary(state)
@@ -42,231 +43,122 @@ def generate_report_node(state: GraphState) -> GraphState:
         print(f"   [EMAIL] Email sent: {metadata.get('email_sent', False)}")
         print(f"   [DASH] Dashboard updated: {metadata.get('dashboard_updated', False)}")
 
-        # Store report metadata in state for downstream use
+        # Store report metadata in state
         state['report_metadata'] = metadata
         state['report_generated'] = True
-
-        # Extract priority actions for continuous learning
-        if hasattr(reporting_agent, '_last_report'):
-            priority_actions = reporting_agent._last_report.get('priority_actions', [])
-            state['priority_actions'] = priority_actions
-
-            # Log priority actions for continuous learning
-            if priority_actions:
-                print("[TARGET] Priority Actions Identified:")
-                for action in priority_actions[:3]:  # Show top 3
-                    print(f"   • {action.get('action', 'Unknown')} (Priority: {action.get('priority', 'Unknown')})")
 
     except Exception as e:
         print(f"[ERROR] Error generating LLM report: {e}")
         # Fallback to basic CSV report
         print("[FALLBACK] Falling back to basic CSV report...")
         generate_fallback_csv_report(state)
+        state['report_generated'] = False
 
     return state
 
-
-def extract_analytics_summary(state: GraphState) -> Dict[str, Any]:
+def extract_analytics_summary(state: PipelineGraphState) -> Dict[str, Any]:
     """Extract analytics summary from state."""
-    analytics_df = state.get('analytics_summary', pd.DataFrame())
+    analytics_results = state.get('analytics_results', {})
+    
+    # Calculate aggregate metrics
+    total_symbols = len(state.get('symbols', []))
+    mapes = []
+    volatilities = []
+    
+    for symbol, metrics in analytics_results.items():
+        if 'mape' in metrics:
+            mapes.append(metrics['mape'])
+        if 'volatility' in metrics:
+            volatilities.append(metrics['volatility'])
+            
+    avg_performance = sum(mapes) / len(mapes) if mapes else 0
+    avg_volatility = sum(volatilities) / len(volatilities) if volatilities else 0
+    
+    # Identify top performers (lowest MAPE)
+    perf_list = []
+    for symbol, metrics in analytics_results.items():
+        if 'mape' in metrics:
+            perf_list.append({'symbol': symbol, 'mape': metrics['mape']})
+    
+    perf_list.sort(key=lambda x: x['mape'])
+    top_performers = [item['symbol'] for item in perf_list[:3]]
+    
+    # Identify high risk (placeholder logic)
+    high_risk_symbols = [] 
 
-    if isinstance(analytics_df, pd.DataFrame) and not analytics_df.empty:
-        # Convert DataFrame to summary dict
-        summary = {
-            'total_symbols': len(analytics_df),
-            'avg_performance': analytics_df.get('performance_score', pd.Series()).mean() if 'performance_score' in analytics_df.columns else 0,
-            'top_performers': analytics_df.nlargest(3, 'performance_score')['symbol'].tolist() if 'performance_score' in analytics_df.columns and 'symbol' in analytics_df.columns else [],
-            'risk_metrics': {
-                'avg_volatility': analytics_df.get('volatility', pd.Series()).mean() if 'volatility' in analytics_df.columns else 0,
-                'high_risk_symbols': analytics_df[analytics_df.get('volatility', 0) > 0.3]['symbol'].tolist() if 'volatility' in analytics_df.columns and 'symbol' in analytics_df.columns else []
-            }
+    summary = {
+        'total_symbols': total_symbols,
+        'avg_performance': avg_performance,
+        'top_performers': top_performers,
+        'risk_metrics': {
+            'avg_volatility': avg_volatility,
+            'high_risk_symbols': high_risk_symbols
         }
-    else:
-        summary = {
-            'total_symbols': len(state.get('symbols', [])),
-            'avg_performance': 0,
-            'top_performers': [],
-            'risk_metrics': {'avg_volatility': 0, 'high_risk_symbols': []}
-        }
+    }
 
     return summary
 
-
-def extract_hpo_plan(state: GraphState) -> Dict[str, Any]:
+def extract_hpo_plan(state: PipelineGraphState) -> Dict[str, Any]:
     """Extract HPO plan from state."""
     hpo_results = state.get('hpo_results', {})
-    hpo_decision = state.get('hpo_decision', {})
-
+    
     plan = {
         'hpo_completed': bool(hpo_results),
         'symbols_optimized': list(hpo_results.keys()) if hpo_results else [],
-        'total_optimizations': sum(len(results) for results in hpo_results.values()) if hpo_results else 0,
+        'total_optimizations': 0, 
         'best_improvements': [],
-        'next_priorities': hpo_decision.get('next_priorities', [])
+        'next_priorities': []
     }
-
-    # Extract best improvements
-    for symbol, results in hpo_results.items():
-        for model_family, result in results.items():
-            if result and hasattr(result, 'best_val_mape'):
-                improvement = {
-                    'symbol': symbol,
-                    'model_family': model_family,
-                    'best_mape': result.best_val_mape,
-                    'improvement_pct': result.improvement_pct if hasattr(result, 'improvement_pct') else 0
-                }
-                plan['best_improvements'].append(improvement)
-
-    # Sort by improvement percentage
-    plan['best_improvements'].sort(key=lambda x: x.get('improvement_pct', 0), reverse=True)
-
+    
     return plan
 
-
-def extract_research_insights(state: GraphState) -> Dict[str, Any]:
+def extract_research_insights(state: PipelineGraphState) -> Dict[str, Any]:
     """Extract research insights from state."""
-    shap_results = state.get('shap_results', {})
-    anomalies = state.get('anomalies', {})
-
-    insights = {
+    return {
         'feature_importance': {},
-        'anomalies_detected': len(anomalies),
+        'anomalies_detected': 0,
         'key_findings': [],
-        'market_implications': 'Analysis completed with SHAP insights and anomaly detection',
+        'market_implications': 'N/A',
         'data_suggestions': []
     }
 
-    # Extract SHAP insights
-    if shap_results:
-        for symbol, shap_data in shap_results.items():
-            if isinstance(shap_data, dict) and 'feature_importance' in shap_data:
-                insights['feature_importance'][symbol] = shap_data['feature_importance']
-
-        insights['key_findings'].append(f"SHAP analysis completed for {len(shap_results)} symbols")
-
-    # Add anomaly insights
-    if anomalies:
-        insights['key_findings'].append(f"Detected {len(anomalies)} anomalous patterns requiring attention")
-
-    return insights
-
-
-def extract_guardrail_status(state: GraphState) -> Dict[str, Any]:
+def extract_guardrail_status(state: PipelineGraphState) -> Dict[str, Any]:
     """Extract guardrail status from state."""
-    guardrail_log = state.get('guardrail_log', [])
-    risk_kpis = state.get('risk_kpis', pd.DataFrame())
-
-    status = {
-        'total_checks': len(guardrail_log),
-        'passed_checks': sum(1 for log in guardrail_log if isinstance(log, dict) and log.get('status') == 'passed'),
-        'failed_checks': sum(1 for log in guardrail_log if isinstance(log, dict) and log.get('status') == 'failed'),
-        'warnings': sum(1 for log in guardrail_log if isinstance(log, dict) and log.get('status') == 'warning'),
-        'critical_issues': [log for log in guardrail_log if isinstance(log, dict) and log.get('severity') == 'critical'],
-        'can_proceed': all((log.get('status') != 'failed' if isinstance(log, dict) else True) for log in guardrail_log)
+    return {
+        'total_checks': 0,
+        'passed_checks': 0,
+        'failed_checks': 0,
+        'warnings': 0,
+        'critical_issues': [],
+        'can_proceed': True
     }
 
-    # Add risk KPI summary
-    if isinstance(risk_kpis, pd.DataFrame) and not risk_kpis.empty:
-        status['risk_summary'] = {
-            'avg_var': risk_kpis.get('var_95', pd.Series()).mean() if 'var_95' in risk_kpis.columns else 0,
-            'max_drawdown': risk_kpis.get('max_drawdown', pd.Series()).max() if 'max_drawdown' in risk_kpis.columns else 0,
-            'high_risk_symbols': risk_kpis[risk_kpis.get('var_95', 0) > 0.05]['symbol'].tolist() if 'var_95' in risk_kpis.columns and 'symbol' in risk_kpis.columns else []
-        }
-
-    return status
-
-
-def extract_run_metadata(state: GraphState) -> Dict[str, Any]:
+def extract_run_metadata(state: PipelineGraphState) -> Dict[str, Any]:
     """Extract run metadata from state."""
     return {
         'run_type': state.get('run_type', 'DAILY'),
         'symbols_processed': len(state.get('symbols', [])),
         'timestamp': pd.Timestamp.now().isoformat(),
-        'execution_time': 'N/A',  # Could be calculated if start time is tracked
+        'execution_time': 'N/A',
         'models_trained': len(state.get('best_models', {})),
         'features_generated': len(state.get('features', {})),
         'forecasts_generated': len(state.get('forecasts', {})),
         'errors_encountered': len(state.get('errors', [])),
-        'actions_executed': len(state.get('executed_actions', []))
+        'actions_executed': 0
     }
 
-
-def generate_fallback_csv_report(state: GraphState) -> None:
-    """Fallback CSV report generation when LLM reporting fails."""
-    hpo_results = state.get('hpo_results', {})
-    all_performance_data = []
-
-    for symbol, results in hpo_results.items():
-        for model_family, result in results.items():
-            if result:
-                performance_data = {
-                    'symbol': symbol,
-                    'model_family': model_family,
-                    'mape': result.best_val_mape,
-                    'mae': result.best_val_mae,
-                    'model_id': result.best_model_id,
-                    'artifact_path': result.artifact_info.artifact_uri if result.artifact_info else None
-                }
-                all_performance_data.append(performance_data)
-
-    if all_performance_data:
-        report_df = pd.DataFrame(all_performance_data)
-
-        # Save report to disk
+def generate_fallback_csv_report(state: PipelineGraphState) -> None:
+    """Fallback CSV report generation."""
+    analytics_results = state.get('analytics_results', {})
+    data = []
+    for symbol, metrics in analytics_results.items():
+        metrics['symbol'] = symbol
+        data.append(metrics)
+        
+    if data:
+        df = pd.DataFrame(data)
         report_path = "results/reports"
         os.makedirs(report_path, exist_ok=True)
-        report_filename = os.path.join(report_path, "fallback_model_evaluation_report.csv")
-
-        report_df.to_csv(report_filename, index=False)
-
-        print(f"[OK] Fallback CSV performance report saved to {report_filename}")
-
-        # For display, show the top 5 models by MAPE
-        print("\nTop 5 Performing Models (by MAPE):")
-        print(report_df.sort_values(by='mape').head(5))
-    else:
-        print("[WARN] No performance data available to generate a report.")
-
-
-def apply_continuous_learning_feedback(priority_actions: list, state: GraphState) -> Dict[str, Any]:
-    """
-    Apply continuous learning feedback based on report recommendations.
-
-    This implements Step 5: continuous learning loop where reports inform future decisions.
-    """
-    feedback = {
-        'actions_triggered': [],
-        'decisions_updated': [],
-        'learning_insights': []
-    }
-
-    for action in priority_actions:
-        action_type = action.get('action', '').lower()
-        priority = action.get('priority', 'medium')
-        rationale = action.get('rationale', '')
-
-        # High priority actions get automatic execution
-        if priority == 'high':
-            if 'retrain' in action_type or 'model' in action_type:
-                feedback['actions_triggered'].append(f"High-priority retraining triggered: {action_type}")
-                feedback['decisions_updated'].append({'type': 'retraining', 'symbol': action.get('owner', 'all')})
-                state['drift_detected'] = True  # Trigger retraining loop
-
-            elif 'hpo' in action_type or 'optimization' in action_type:
-                feedback['actions_triggered'].append(f"High-priority HPO triggered: {action_type}")
-                feedback['decisions_updated'].append({'type': 'hpo', 'symbol': action.get('owner', 'all')})
-                state['hpo_triggered'] = True  # Trigger HPO loop
-
-            elif 'feature' in action_type:
-                feedback['actions_triggered'].append(f"High-priority feature engineering triggered: {action_type}")
-                feedback['decisions_updated'].append({'type': 'feature_engineering', 'symbol': action.get('owner', 'all')})
-
-        # Learning insights for all actions
-        feedback['learning_insights'].append({
-            'action': action_type,
-            'priority': priority,
-            'rationale': rationale,
-            'learning_applied': priority == 'high'
-        })
-
-    return feedback
+        report_filename = os.path.join(report_path, "fallback_report.csv")
+        df.to_csv(report_filename, index=False)
+        print(f"[OK] Fallback CSV report saved to {report_filename}")

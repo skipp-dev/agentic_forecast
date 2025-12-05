@@ -1,4 +1,4 @@
-# Entry point for the agentic_forecast application
+﻿# Entry point for the agentic_forecast application
 import os
 import yaml
 import signal
@@ -7,10 +7,10 @@ import logging
 import tensorflow as tf
 import argparse
 import re
-
-# Set up logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-logger = logging.getLogger(__name__)
+import asyncio
+import pandas as pd
+import torch
+from langgraph.graph import StateGraph, END
 
 # Add project root to Python path
 project_root = os.path.dirname(os.path.abspath(__file__))
@@ -26,14 +26,25 @@ except ImportError:
 # Suppress TensorFlow warnings but allow GPU detection
 os.environ['TF_ENABLE_ONEDNN_OPTS'] = '0'  # Disable oneDNN optimizations to prevent numerical warnings
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'   # Reduce TensorFlow logging (0=INFO, 1=WARNING, 2=ERROR, 3=FATAL)
-# Note: CUDA_VISIBLE_DEVICES is set in .env file to allow GPU access
-
-import asyncio
-import pandas as pd
-import torch
 
 from src.core.run_context import RunType, RunContext
-from src.pipelines import run_daily_pipeline, run_weekend_hpo_pipeline, run_backtest_pipeline
+from src.core.state import PipelineGraphState
+from src.nodes.execution_nodes import (
+    data_ingestion_node,
+    feature_engineering_node,
+    forecasting_node
+)
+from src.nodes.hpo_nodes import hpo_node
+from src.nodes.agent_nodes import analytics_node
+from src.nodes.monitoring_nodes import monitoring_node
+from src.nodes.retraining_nodes import retraining_node
+from src.nodes.reporting_nodes import generate_report_node
+from src.nodes.strategy_nodes import strategy_node
+from src.agents.orchestrator_agent import OrchestratorAgent
+
+# Set up logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
 
 def parse_args():
     """Parse command line arguments"""
@@ -73,18 +84,6 @@ def load_config():
             return item
             
         config = substitute_env_vars(config)
-        
-        # Load quality config
-        quality_path = os.path.join("config", "quality.yml")
-        if os.path.exists(quality_path):
-            try:
-                with open(quality_path, 'r') as f:
-                    quality_config = yaml.safe_load(f)
-                    config['quality'] = quality_config
-                    print(f"Loaded quality config from {quality_path}")
-            except Exception as e:
-                logger.warning(f"Failed to load quality config: {e}")
-                
         return config
     return {}
 
@@ -153,13 +152,6 @@ def setup_gpu():
 
         else:
             print("No GPU devices found - training will use CPU")
-            print("For GPU support:")
-            print("   1. Ensure NVIDIA GPU is installed")
-            print("   2. Install NVIDIA drivers: https://www.nvidia.com/Download/index.aspx")
-            print("   3. Install CUDA Toolkit: https://developer.nvidia.com/cuda-toolkit")
-            print("   4. Install PyTorch with CUDA: pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121")
-            print("   See GPU_SETUP_GUIDE.md for detailed instructions")
-
             # Suppress CUDA warnings only when no GPU is available
             os.environ['CUDA_VISIBLE_DEVICES'] = ''
             return False
@@ -194,7 +186,7 @@ def setup_langsmith(config):
         print("LangSmith tracing enabled")
     else:
         os.environ['LANGCHAIN_TRACING_V2'] = 'false'
-        print("⚠️ LangSmith tracing disabled")
+        print(" LangSmith tracing disabled")
 
 def main():
     """Main entry point for the agentic_forecast application"""
@@ -216,7 +208,6 @@ def main():
         """Handle graceful shutdown on SIGINT (Ctrl+C)"""
         print("\nReceived interrupt signal. Shutting down gracefully...")
         print("Cleaning up connections...")
-        # Force exit to avoid IB cleanup issues during shutdown
         sys.exit(0)
 
     # Register signal handler for graceful shutdown
@@ -230,7 +221,6 @@ def main():
     setup_langsmith(config)
     
     # Load symbols from main watchlist CSV
-    # Use config max_symbols setting for all run types
     max_symbols = config.get('scaling', {}).get('max_symbols', None)
     symbols = load_symbols_from_csv(max_symbols=max_symbols)
     if not symbols:
@@ -247,14 +237,99 @@ def main():
         
         logging.info("Starting run", extra={"run_type": ctx.run_type.value, "run_id": ctx.run_id})
 
-        if ctx.run_type == RunType.DAILY:
-            run_daily_pipeline(ctx, symbols, config)
-        elif ctx.run_type == RunType.WEEKEND_HPO:
-            run_weekend_hpo_pipeline(ctx, symbols, config)
-        elif ctx.run_type == RunType.BACKTEST:
-            run_backtest_pipeline(ctx, symbols, config)
-        else:
-            raise ValueError(f"Unsupported run_type: {ctx.run_type!r}")
+        # Initialize Orchestrator
+        orchestrator = OrchestratorAgent(config=config)
+
+        # Define Routing Logic
+        def route_after_features(state: PipelineGraphState):
+            decision = orchestrator.coordinate_workflow(state)
+            logger.info(f"Orchestrator decision after features: {decision}")
+            if decision == "hpo":
+                return "hpo"
+            return "forecasting"
+
+        def route_after_analytics(state: PipelineGraphState):
+            decision = orchestrator.coordinate_workflow(state)
+            logger.info(f"Orchestrator decision after analytics: {decision}")
+            if decision == "retrain":
+                return "strategy"
+            elif decision == "end":
+                return END
+            return "strategy" # Default continue to strategy node
+
+        # --- Build the Graph ---
+        workflow = StateGraph(PipelineGraphState)
+
+        # Add nodes
+        workflow.add_node("data_ingestion", data_ingestion_node)
+        workflow.add_node("feature_engineering", feature_engineering_node)
+        workflow.add_node("hpo", hpo_node)
+        workflow.add_node("forecasting", forecasting_node)
+        workflow.add_node("analytics", analytics_node)
+        workflow.add_node("strategy", strategy_node)
+        workflow.add_node("monitoring", monitoring_node)
+        workflow.add_node("retraining", retraining_node)
+        workflow.add_node("reporting", generate_report_node)
+
+        # Define edges
+        workflow.set_entry_point("data_ingestion")
+        workflow.add_edge("data_ingestion", "feature_engineering")
+        
+        # Conditional routing after feature engineering
+        workflow.add_conditional_edges(
+            "feature_engineering",
+            route_after_features,
+            {
+                "hpo": "hpo",
+                "forecasting": "forecasting"
+            }
+        )
+        
+        workflow.add_edge("hpo", "forecasting")
+        workflow.add_edge("forecasting", "analytics")
+        
+        # Conditional routing after analytics
+        workflow.add_conditional_edges(
+            "analytics",
+            route_after_analytics,
+            {
+                "strategy": "strategy",
+                END: END
+            }
+        )
+        
+        workflow.add_edge("strategy", "monitoring")
+        workflow.add_edge("monitoring", "retraining")
+        workflow.add_edge("retraining", "reporting")
+        workflow.add_edge("reporting", END)
+
+        # Compile
+        app = workflow.compile()
+
+        # Initial state
+        initial_state = PipelineGraphState(
+            symbols=symbols,
+            start_date="2020-01-01",
+            end_date="2023-01-01",
+            run_id=ctx.run_id,
+            config=config,
+            run_type=ctx.run_type.value,
+            hpo_triggered=True, # Enable HPO by default for now to verify flow
+            drift_detected=[],
+            retrained_models=[],
+            hpo_results={},
+            errors=[],
+            run_status="ACTIVE",
+            next_step="",
+            deep_research_conducted=False,
+            horizon_forecasts={},
+            interpreted_forecasts=False
+        )
+
+        # Run
+        print("Starting Graph Execution...")
+        final_state = app.invoke(initial_state)
+        print("Graph Execution Completed.")
         
     elif args.task == "llm_analytics_only":
         from src.analytics.llm_analytics_orchestrator import run_llm_analytics_explainer
@@ -267,4 +342,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

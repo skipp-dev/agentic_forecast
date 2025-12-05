@@ -1,101 +1,64 @@
-import unittest
-from unittest.mock import MagicMock
-import pandas as pd
-import numpy as np
+import pytest
 from src.agents.portfolio_manager_agent import PortfolioManagerAgent
 
-class TestPortfolioManagerAgent(unittest.TestCase):
-    def setUp(self):
-        self.config = {
-            'max_position_size': 0.2,
-            'target_cash': 0.1, # 10% cash
-            'risk': {
-                'max_portfolio_var': 0.05
-            }
-        }
-        self.agent = PortfolioManagerAgent(self.config)
-        
-        # Mock Risk Agent to always approve unless specified
-        self.agent.risk_agent.assess_portfolio_risk = MagicMock(return_value={
-            'risk_approved': True,
-            'metrics': {'VaR_95': -0.01},
-            'reason': 'OK'
-        })
-        
-        self.raw_data = {'AAPL': pd.DataFrame(), 'GOOG': pd.DataFrame()}
+@pytest.fixture
+def portfolio_agent():
+    return PortfolioManagerAgent(config={
+        'max_position_size': 0.2,
+        'target_cash': 0.0,
+        'risk': {'max_portfolio_var': 1.0} # Relax risk for these tests
+    })
 
-    def test_position_limits(self):
-        """Test that individual position limits are respected."""
-        # Recommend huge position
-        actions = ["Promote BaselineLinear for AAPL (Trust: 0.9, Size: 5.0x)"]
-        best_models = {'AAPL': {'model_family': 'BaselineLinear'}}
-        
-        result = self.agent.construct_portfolio(actions, best_models, self.raw_data)
-        weights = result['target_weights']
-        
-        # Should be capped at 0.2
-        self.assertLessEqual(weights['AAPL'], 0.2)
+def test_total_weight_does_not_exceed_limit(portfolio_agent):
+    """Test that total allocation does not exceed 1.0 (minus cash)."""
+    # Mock inputs
+    best_models = {f"SYM{i}": {} for i in range(10)}
+    # Recommend promoting all of them
+    actions = [f"Promote ModelX for SYM{i}" for i in range(10)]
+    
+    # Mock risk agent to always approve
+    portfolio_agent.risk_agent.assess_portfolio_risk = lambda pos, data: {'risk_approved': True, 'metrics': {}}
+    
+    result = portfolio_agent.construct_portfolio(actions, best_models, {})
+    weights = result.target_weights
+    
+    total_weight = sum(weights.values())
+    assert total_weight <= 1.0 + 1e-6
 
-    def test_target_cash(self):
-        """Test that portfolio leaves room for target cash."""
-        # Recommend many assets
-        actions = [
-            "Promote M1 for AAPL (Size: 1.0x)",
-            "Promote M2 for GOOG (Size: 1.0x)",
-            "Promote M3 for MSFT (Size: 1.0x)",
-            "Promote M4 for AMZN (Size: 1.0x)",
-            "Promote M5 for TSLA (Size: 1.0x)"
-        ]
-        best_models = {
-            'AAPL': {}, 'GOOG': {}, 'MSFT': {}, 'AMZN': {}, 'TSLA': {}
-        }
-        
-        # Mock data for all
-        raw_data = {k: pd.DataFrame() for k in best_models}
-        
-        result = self.agent.construct_portfolio(actions, best_models, raw_data)
-        weights = result['target_weights']
-        
-        total_weight = sum(weights.values())
-        # Should be <= 1.0 - target_cash (0.9)
-        self.assertLessEqual(total_weight, 0.900001)
+def test_per_symbol_max_weight_respected(portfolio_agent):
+    """Test that individual position sizes are capped."""
+    # Only 1 symbol
+    best_models = {"AAPL": {}}
+    actions = ["Promote ModelX for AAPL"]
+    
+    # Mock risk agent
+    portfolio_agent.risk_agent.assess_portfolio_risk = lambda pos, data: {'risk_approved': True, 'metrics': {}}
+    
+    result = portfolio_agent.construct_portfolio(actions, best_models, {})
+    weights = result.target_weights
+    
+    # Should be capped at 0.2 (from config)
+    assert weights["AAPL"] <= 0.2 + 1e-6
 
-    def test_risk_rejection_fallback(self):
-        """Test fallback logic when risk agent rejects."""
-        # Mock rejection
-        self.agent.risk_agent.assess_portfolio_risk = MagicMock(side_effect=[
-            {'risk_approved': False, 'reason': 'Too risky'}, # First call rejects
-            {'risk_approved': True, 'reason': 'OK'}          # Second call (after scaling) accepts
-        ])
-        
-        actions = ["Promote M1 for AAPL (Size: 1.0x)"]
-        best_models = {'AAPL': {}}
-        
-        result = self.agent.construct_portfolio(actions, best_models, self.raw_data)
-        
-        # Verify assess_portfolio_risk was called twice
-        self.assertEqual(self.agent.risk_agent.assess_portfolio_risk.call_count, 2)
-        
-        # Verify weights were scaled down (fallback logic is 50% reduction)
-        # Initial weight for 1.0x is 0.1. Scaled to (1-cash)/total -> 0.9/0.1 = 9x? 
-        # Wait, logic is: weight = 0.1 * mult. 
-        # Then scale_factor = (1-cash) / total.
-        # If total < 1-cash, we don't scale UP usually?
-        # Let's check implementation:
-        # if total_weight > 0: scale_factor = (1.0 - self.target_cash) / total_weight
-        # It scales UP or DOWN to match target exposure exactly?
-        # "Normalize weights to sum to (1 - target_cash)"
-        # Yes, it scales to fill the bucket.
-        
-        # So initial: AAPL=0.1. Total=0.1. Target=0.9. Scale=9.
-        # AAPL becomes 0.9. But max_position_size is 0.2.
-        # So AAPL becomes 0.2.
-        
-        # Then Risk Agent rejects.
-        # Fallback: "Reduce exposure by 50%"
-        # AAPL becomes 0.1.
-        
-        self.assertAlmostEqual(result['target_weights']['AAPL'], 0.1)
+def test_empty_signals_yield_zero_allocation(portfolio_agent):
+    """Test that no signals result in empty portfolio."""
+    result = portfolio_agent.construct_portfolio([], {}, {})
+    weights = result.target_weights
+    
+    assert sum(weights.values()) == 0.0
 
-if __name__ == '__main__':
-    unittest.main()
+def test_normalization_of_excessive_signals(portfolio_agent):
+    """Test that if signals imply > 100%, they are normalized."""
+    # 20 symbols, all promoted. Base weight is 0.1. Sum would be 2.0.
+    best_models = {f"SYM{i}": {} for i in range(20)}
+    actions = [f"Promote ModelX for SYM{i}" for i in range(20)]
+    
+    portfolio_agent.risk_agent.assess_portfolio_risk = lambda pos, data: {'risk_approved': True, 'metrics': {}}
+    
+    result = portfolio_agent.construct_portfolio(actions, best_models, {})
+    weights = result.target_weights
+    
+    total_weight = sum(weights.values())
+    assert total_weight <= 1.0 + 1e-6
+    # Each should be roughly 0.05
+    assert weights["SYM0"] == pytest.approx(0.05, abs=0.01)

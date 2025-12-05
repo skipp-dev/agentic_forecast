@@ -31,7 +31,9 @@ class RiskManagementAgent:
             return {'risk_approved': True, 'metrics': {}, 'reason': 'Empty portfolio'}
 
         # Align data
-        returns_df = pd.DataFrame()
+        returns_list = []
+        valid_symbols = []
+        
         for symbol, weight in positions.items():
             if weight > 0 and symbol in raw_data:
                 df = raw_data[symbol].copy()
@@ -44,18 +46,39 @@ class RiskManagementAgent:
                 
                 # Calculate daily returns
                 returns = price.pct_change().dropna()
-                returns_df[symbol] = returns
+                returns.name = symbol
+                returns_list.append(returns)
+                valid_symbols.append(symbol)
 
-        if returns_df.empty:
+        if not returns_list:
             return {'risk_approved': False, 'metrics': {}, 'reason': 'Insufficient data for risk calculation'}
 
+        # Create DataFrame and handle alignment
+        returns_df = pd.concat(returns_list, axis=1)
+        
+        # Drop rows with any missing data to ensure valid covariance calculation
+        # This ensures we only look at time periods where all assets existed
+        returns_df = returns_df.dropna()
+
+        if returns_df.empty:
+             # Fallback: if no common history, try filling with 0 (assuming flat) or just fail
+             # For safety, we fail if there's absolutely no overlapping history
+            return {'risk_approved': False, 'metrics': {}, 'reason': 'No overlapping history for portfolio assets'}
+
         # Calculate Portfolio Returns
+        # Re-extract weights for valid symbols only
         weights = np.array([positions.get(col, 0) for col in returns_df.columns])
-        weights = weights / np.sum(weights) # Normalize to 1 for calculation
+        
+        total_weight = np.sum(weights)
+        if total_weight == 0:
+             return {'risk_approved': False, 'metrics': {}, 'reason': 'Total portfolio weight is zero'}
+             
+        weights = weights / total_weight # Normalize to 1 for calculation
         
         portfolio_returns = returns_df.dot(weights)
         
         # Calculate VaR (Value at Risk)
+        # Use nanpercentile just in case, though dropna should have handled it
         var_95 = np.percentile(portfolio_returns, (1 - self.confidence_level) * 100)
         
         # Calculate CVaR (Conditional VaR / Expected Shortfall)
@@ -87,6 +110,10 @@ class RiskManagementAgent:
             limit_breach = True
             reasons.append(f"Volatility {volatility:.2%} exceeds limit {self.config.get('max_volatility', 0.30):.2%}")
 
+        # Runtime Assertions for Safety
+        assert np.isfinite(var_95), "Calculated VaR is not finite"
+        assert np.isfinite(volatility), "Calculated Volatility is not finite"
+        
         return {
             'risk_approved': not limit_breach,
             'metrics': metrics,

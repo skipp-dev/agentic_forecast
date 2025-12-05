@@ -13,7 +13,7 @@ from datetime import datetime, timedelta
 from typing import Dict, List, Tuple, Optional, Union, Any
 import logging
 from sklearn.preprocessing import StandardScaler, RobustScaler
-from sklearn.model_selection import train_test_split
+from sklearn.model_selection import train_test_split, TimeSeriesSplit
 
 # Add src to path
 sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'src'))
@@ -79,7 +79,8 @@ class DataPipeline:
                 # Merge on date index
                 combined_data = price_data.join(tech_features, how='left')
                 # Forward fill missing technical indicator values
-                combined_data = combined_data.fillna(method='ffill').fillna(method='bfill')
+                # NO BACKWARD FILL to prevent look-ahead bias
+                combined_data = combined_data.fillna(method='ffill')
             except Exception as e:
                 logger.warning(f"Could not fetch technical indicators: {e}")
                 combined_data = price_data
@@ -87,13 +88,23 @@ class DataPipeline:
             combined_data = price_data
 
         # Add basic derived features
-        combined_data['returns'] = combined_data['close'].pct_change(fill_method=None)
-        combined_data['log_returns'] = np.log(combined_data['close'] / combined_data['close'].shift(1))
+        # Use adjusted_close for returns if available to handle splits/dividends correctly
+        if 'adjusted_close' in combined_data.columns:
+            price_col = 'adjusted_close'
+        else:
+            price_col = 'close'
+            
+        combined_data['returns'] = combined_data[price_col].pct_change(fill_method=None)
+        combined_data['log_returns'] = np.log(combined_data[price_col] / combined_data[price_col].shift(1))
+        
+        # Volatility should be based on adjusted returns
         combined_data['volatility'] = combined_data['returns'].rolling(20).std()
         combined_data['volume_ma'] = combined_data['volume'].rolling(20).mean()
 
         # Fill NaN values
-        combined_data = combined_data.fillna(method='bfill').fillna(0)
+        # Drop initial NaNs instead of fabricating data
+        combined_data = combined_data.dropna()
+        combined_data = combined_data.fillna(0)
 
         logger.info(f"Fetched {len(combined_data)} data points with {len(combined_data.columns)} features")
         return combined_data
@@ -173,22 +184,93 @@ class DataPipeline:
         if data.empty:
             raise ValueError(f"Could not fetch data for {symbol}")
 
-        # Prepare data
-        X_train, X_test, y_train, y_test = self.prepare_ml_data(
-            data, sequence_length=sequence_length, test_size=0.2
-        )
+        # Prepare data manually to control splits
+        # Set feature columns if not set
+        if self.feature_columns is None:
+            self.feature_columns = [col for col in data.columns if col != 'close']
+            
+        X = data[self.feature_columns].values
+        y = data['close'].values
 
-        # Create and train model
-        model = LSTMForecaster(sequence_length=sequence_length, n_features=X_train.shape[2])
-        training_results = model.train(X_train, y_train, epochs=epochs, **kwargs)
+        # Scale
+        X_scaled = self.scaler_X.fit_transform(X)
+        y_scaled = self.scaler_y.fit_transform(y.reshape(-1, 1)).flatten()
 
-        # Evaluate on test set
-        test_metrics = model.evaluate(X_test, y_test)
+        # Initial split for final holdout (80/20)
+        split_idx = int(len(X_scaled) * 0.8)
+        
+        X_train_full = X_scaled[:split_idx]
+        y_train_full = y_scaled[:split_idx]
+        
+        # For holdout, we need overlap
+        if split_idx >= sequence_length:
+            X_test_holdout = X_scaled[split_idx - sequence_length:]
+            y_test_holdout = y_scaled[split_idx - sequence_length:]
+        else:
+            X_test_holdout = X_scaled[split_idx:]
+            y_test_holdout = y_scaled[split_idx:]
+
+        # Walk-Forward Validation (3 splits)
+        tscv = TimeSeriesSplit(n_splits=3)
+        fold_metrics = []
+        
+        logger.info(f"Running Walk-Forward Validation (3 splits) on training set...")
+        
+        for fold, (train_index, val_index) in enumerate(tscv.split(X_train_full)):
+            X_t, X_v = X_train_full[train_index], X_train_full[val_index]
+            y_t, y_v = y_train_full[train_index], y_train_full[val_index]
+            
+            # Add overlap to validation set
+            if len(X_t) >= sequence_length:
+                X_v_extended = np.concatenate([X_t[-sequence_length:], X_v])
+                y_v_extended = np.concatenate([y_t[-sequence_length:], y_v])
+            else:
+                X_v_extended = X_v
+                y_v_extended = y_v
+
+            # Train temporary model for this fold
+            cv_epochs = max(5, epochs // 2) 
+            
+            model_fold = LSTMForecaster(input_size=X_train_full.shape[1], epochs=cv_epochs)
+            model_fold.train(X_t, y_t, sequence_length=sequence_length, **kwargs)
+            
+            # Evaluate manually
+            preds = model_fold.predict(X_v_extended, sequence_length=sequence_length)
+            targets = y_v_extended[sequence_length:]
+            
+            min_len = min(len(preds), len(targets))
+            preds = preds[:min_len]
+            targets = targets[:min_len]
+            
+            mae = np.mean(np.abs(targets - preds))
+            fold_metrics.append(mae)
+            logger.info(f"Fold {fold+1} MAE: {mae:.4f}")
+
+        avg_cv_mae = np.mean(fold_metrics)
+        logger.info(f"Average Walk-Forward MAE: {avg_cv_mae:.4f}")
+
+        # Train final model on full training set
+        model = LSTMForecaster(input_size=X_train_full.shape[1], epochs=epochs)
+        training_results = model.train(X_train_full, y_train_full, sequence_length=sequence_length, **kwargs)
+
+        # Evaluate on Holdout
+        preds_test = model.predict(X_test_holdout, sequence_length=sequence_length)
+        targets_test = y_test_holdout[sequence_length:]
+        
+        min_len = min(len(preds_test), len(targets_test))
+        preds_test = preds_test[:min_len]
+        targets_test = targets_test[:min_len]
+        
+        mae = np.mean(np.abs(targets_test - preds_test))
+        rmse = np.sqrt(np.mean((targets_test - preds_test)**2))
+        
+        test_metrics = {'mae': mae, 'rmse': rmse}
 
         results = {
             'model': model,
             'training_results': training_results,
             'test_metrics': test_metrics,
+            'cv_mae': avg_cv_mae, # Store CV metric
             'symbol': symbol,
             'data_points': len(data)
         }
@@ -223,15 +305,55 @@ class DataPipeline:
         X_scaled = self.scaler_X.fit_transform(X)
         y_scaled = self.scaler_y.fit_transform(y.reshape(-1, 1)).flatten()
 
-        # Split
-        X_train, X_test, y_train, y_test = train_test_split(
-            X_scaled, y_scaled, test_size=0.2, shuffle=False
-        )
-
-        # Create and train ensemble
+        # Walk-Forward Validation (Expanding Window)
+        # Instead of a single split, we use TimeSeriesSplit to simulate real-world performance
+        tscv = TimeSeriesSplit(n_splits=5)
+        
+        fold_metrics = []
+        
         from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor
         from sklearn.linear_model import LinearRegression
+        
+        # We will train the final model on the full training set (first 80%), 
+        # but we validate its architecture using Walk-Forward on that 80%.
+        # Wait, standard practice:
+        # 1. Use Walk-Forward to estimate performance (metrics).
+        # 2. Retrain on full X_train (80%) to get the model for X_test (20%).
+        
+        # Initial split for final holdout
+        split_idx = int(len(X_scaled) * 0.8)
+        X_train_full, X_test_holdout = X_scaled[:split_idx], X_scaled[split_idx:]
+        y_train_full, y_test_holdout = y_scaled[:split_idx], y_scaled[split_idx:]
+        
+        logger.info(f"Running Walk-Forward Validation (5 splits) on training set...")
+        
+        for fold, (train_index, val_index) in enumerate(tscv.split(X_train_full)):
+            X_t, X_v = X_train_full[train_index], X_train_full[val_index]
+            y_t, y_v = y_train_full[train_index], y_train_full[val_index]
+            
+            # Train temporary models for this fold
+            rf_fold = RandomForestRegressor(n_estimators=100, random_state=42)
+            gb_fold = GradientBoostingRegressor(n_estimators=100, random_state=42)
+            lr_fold = LinearRegression()
+            
+            rf_fold.fit(X_t, y_t)
+            gb_fold.fit(X_t, y_t)
+            lr_fold.fit(X_t, y_t)
+            
+            # Simple average ensemble for validation
+            pred_rf = rf_fold.predict(X_v)
+            pred_gb = gb_fold.predict(X_v)
+            pred_lr = lr_fold.predict(X_v)
+            pred_avg = (pred_rf + pred_gb + pred_lr) / 3.0
+            
+            fold_rmse = np.sqrt(np.mean((y_v - pred_avg)**2))
+            fold_metrics.append(fold_rmse)
+            logger.info(f"Fold {fold+1} RMSE: {fold_rmse:.4f}")
 
+        avg_cv_rmse = np.mean(fold_metrics)
+        logger.info(f"Average Walk-Forward RMSE: {avg_cv_rmse:.4f}")
+
+        # Now train final model on full training set
         ensemble = EnsembleForecaster()
 
         # Create and train base models first
@@ -240,26 +362,27 @@ class DataPipeline:
         lr = LinearRegression()
 
         # Train individual models
-        rf.fit(X_train, y_train)
-        gb.fit(X_train, y_train)
-        lr.fit(X_train, y_train)
+        rf.fit(X_train_full, y_train_full)
+        gb.fit(X_train_full, y_train_full)
+        lr.fit(X_train_full, y_train_full)
 
         # Add trained models to ensemble
         ensemble.add_base_model('rf', rf)
         ensemble.add_base_model('gb', gb)
         ensemble.add_base_model('lr', lr)
 
-        ensemble.train_ensemble(X_train, y_train)
+        ensemble.train_ensemble(X_train_full, y_train_full)
 
-        # Evaluate
-        predictions = ensemble.predict(X_test)
-        mae = np.mean(np.abs(y_test - predictions))
-        rmse = np.sqrt(np.mean((y_test - predictions)**2))
+        # Evaluate on Holdout
+        predictions = ensemble.predict(X_test_holdout)
+        mae = np.mean(np.abs(y_test_holdout - predictions))
+        rmse = np.sqrt(np.mean((y_test_holdout - predictions)**2))
 
         results = {
             'ensemble': ensemble,
             'test_mae': mae,
             'test_rmse': rmse,
+            'cv_rmse': avg_cv_rmse, # Store CV metric
             'symbol': symbol,
             'data_points': len(data)
         }

@@ -1,8 +1,10 @@
 import logging
+import pandas as pd
 from datetime import datetime, timedelta
 from ..graphs.state import GraphState
 from ..agents.macro_data_agent import MacroDataAgent
 from ..agents.regime_agent import RegimeAgent
+from ..agents.regime_detection_agent import RegimeDetectionAgent
 
 logger = logging.getLogger(__name__)
 
@@ -16,8 +18,15 @@ def macro_data_node(state: GraphState) -> GraphState:
         agent = MacroDataAgent(state.get('config', {}))
         
         # Determine date range (e.g. last 180 days for regime detection and features)
-        end_date = datetime.now().strftime('%Y-%m-%d')
-        start_date = (datetime.now() - timedelta(days=180)).strftime('%Y-%m-%d')
+        # Respect cutoff_date for backtesting
+        cutoff_date_str = state.get('cutoff_date')
+        if cutoff_date_str:
+            end_dt = pd.to_datetime(cutoff_date_str)
+        else:
+            end_dt = datetime.now()
+            
+        end_date = end_dt.strftime('%Y-%m-%d')
+        start_date = (end_dt - timedelta(days=180)).strftime('%Y-%m-%d')
         
         macro_data = agent.get_macro_data(start_date, end_date)
         
@@ -48,12 +57,38 @@ def regime_detection_node(state: GraphState) -> GraphState:
             state['regimes'] = {}
             return state
             
-        target_date = datetime.now().strftime('%Y-%m-%d')
+        # Respect cutoff_date for backtesting
+        cutoff_date_str = state.get('cutoff_date')
+        if cutoff_date_str:
+            target_date = cutoff_date_str
+        else:
+            target_date = datetime.now().strftime('%Y-%m-%d')
         
         regimes = agent.detect_regime(target_date, raw_macro_data)
         
         state['regimes'] = regimes
         logger.info(f"Detected regimes: {regimes}")
+        
+        # Also detect historical regimes for feature engineering
+        try:
+            complex_agent = RegimeDetectionAgent()
+            processed_features = macro_data_full.get('processed_features')
+            if processed_features is not None and not processed_features.empty:
+                # Pass cutoff_date to enforce point-in-time correctness
+                historical_regimes = complex_agent.detect_regimes(processed_features, cutoff_date=cutoff_date_str)
+                
+                # Convert Series to serializable format (Dict[str, Dict[date_str, value]])
+                serializable_history = {}
+                for name, series in historical_regimes.items():
+                    # Ensure index is string (YYYY-MM-DD)
+                    series_copy = series.copy()
+                    series_copy.index = series_copy.index.strftime('%Y-%m-%d')
+                    serializable_history[name] = series_copy.to_dict()
+                
+                state['historical_regimes'] = serializable_history
+                logger.info(f"Detected historical regimes: {list(historical_regimes.keys())}")
+        except Exception as e:
+            logger.warning(f"Historical regime detection failed: {e}")
         
     except Exception as e:
         logger.error(f"Regime detection failed: {e}")

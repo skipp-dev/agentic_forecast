@@ -13,6 +13,8 @@ class MetricsSnapshot:
     guardrail_counts: Dict[str, int]
     news_health: Dict[str, Any]
     llm_usage: Dict[str, Any]
+    risk_events: List[Any] = None
+    run_health: Dict[str, Any] = None
 
 @dataclass
 class AutoDocReport:
@@ -73,16 +75,27 @@ class AutoDocumentationAgent:
         config: Dict[str, Any]
     ) -> str:
         """Format the context for the LLM prompt."""
+        # Convert risk events to serializable format if they are objects
+        serializable_risk_events = []
+        if metrics.risk_events:
+            for e in metrics.risk_events:
+                if hasattr(e, '__dict__'):
+                    serializable_risk_events.append(e.__dict__)
+                else:
+                    serializable_risk_events.append(str(e))
+
         return json.dumps({
             "run_info": {
                 "type": run_context.get("run_type"),
                 "id": run_context.get("run_id"),
-                "date": str(datetime.now())
+                "date": str(datetime.now()),
+                "health": metrics.run_health
             },
             "metrics": {
                 "performance": metrics.model_performance,
                 "guardrails": metrics.guardrail_counts,
-                "news": metrics.news_health
+                "news": metrics.news_health,
+                "risk_events": serializable_risk_events
             },
             "config_highlights": {
                 "news_enabled": config.get("news", {}).get("enabled", False),
@@ -124,17 +137,24 @@ class AutoDocumentationAgent:
 
     def _generate_fallback_report(self, run_context: Dict[str, Any], metrics: MetricsSnapshot) -> str:
         """Generate a basic template-based report if LLM fails or is missing."""
+        health_status = "UNKNOWN"
+        if metrics.run_health:
+            health_status = metrics.run_health.get('status', 'UNKNOWN')
+            
         return f"""
 # Run Report: {run_context.get('run_id', 'Unknown')}
 
 **Date**: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
 **Type**: {run_context.get('run_type', 'Unknown')}
+**Status**: {health_status}
 
 ## Model Performance
 - Performance metrics available in JSON summary.
 
-## Guardrails
+## Risk & Guardrails
+- Run Health: {health_status}
 - Active flags: {json.dumps(metrics.guardrail_counts, indent=2)}
+- Risk Events: {len(metrics.risk_events) if metrics.risk_events else 0}
 
 ## News Health
 - News metrics: {json.dumps(metrics.news_health, indent=2)}

@@ -12,6 +12,7 @@ import pandas as pd
 from typing import Dict, List, Any, Optional, Tuple
 import logging
 import json
+import traceback
 from datetime import datetime
 import optuna
 from optuna.samplers import TPESampler
@@ -20,9 +21,13 @@ from optuna.pruners import MedianPruner
 # Add paths
 sys.path.append(os.path.dirname(__file__))
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
+sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..'))
 
 from src.gpu_services import get_gpu_services
 from src.data_pipeline import DataPipeline
+from src.services.training_service import GPUTrainingService
+from src.services.model_registry_service import ModelRegistryService
+from models.model_zoo import DataSpec
 
 logger = logging.getLogger(__name__)
 
@@ -48,6 +53,10 @@ class HyperparameterSearchAgent:
         self.data_pipeline = data_pipeline or DataPipeline()
         self.risk_mode = risk_mode
         self.model_zoo = model_zoo
+        
+        # Initialize new services
+        self.training_service = GPUTrainingService(gpu_services=self.gpu_services)
+        self.model_registry = ModelRegistryService()
 
         # Optuna configuration
         self.sampler = TPESampler(seed=42)
@@ -67,60 +76,37 @@ class HyperparameterSearchAgent:
     @property
     def model_families(self) -> List[str]:
         """List of supported model families."""
-        return ['AutoNHITS', 'AutoNBEATS', 'AutoDLinear', 'BaselineLinear']
+        return ['NLinear', 'NHITS', 'NBEATS', 'TFT', 'AutoDLinear', 'BaselineLinear']
 
     def define_search_space(self, model_type: str) -> Dict[str, Any]:
         """
         Define hyperparameter search space for different model types.
 
         Args:
-            model_type: Type of model ('cnn_lstm', 'ensemble', 'transformer')
+            model_type: Type of model
 
         Returns:
             Search space configuration
         """
-        if model_type == 'cnn_lstm':
+        if model_type == 'BaselineLinear':
             return {
-                'sequence_length': {'type': 'int', 'low': 32, 'high': 256},
-                'n_features': {'type': 'fixed', 'value': 15},  # From data pipeline
-                'cnn_filters': {'type': 'categorical', 'choices': [
-                    [64, 128, 256],
-                    [32, 64, 128],
-                    [128, 256, 512]
-                ]},
-                'lstm_units': {'type': 'categorical', 'choices': [
-                    [128, 64],
-                    [64, 32],
-                    [256, 128]
-                ]},
-                'dropout_rate': {'type': 'float', 'low': 0.0, 'high': 0.5},
-                'learning_rate': {'type': 'float', 'low': 1e-5, 'high': 1e-2, 'log': True},
-                'batch_size': {'type': 'categorical', 'choices': [16, 32, 64]},
-                'epochs': {'type': 'int', 'low': 20, 'high': 100}
+                'fit_intercept': {'type': 'categorical', 'choices': [True, False]}
+            }
+        
+        elif model_type == 'AutoDLinear':
+             return {
+                'input_size': {'type': 'categorical', 'choices': [24, 48, 96]},
+                'start_padding_enabled': {'type': 'categorical', 'choices': [True, False]},
+                'horizon': {'type': 'fixed', 'value': 24}
             }
 
-        elif model_type == 'ensemble':
+        elif model_type in ['NLinear', 'NHITS', 'NBEATS', 'TFT']:
             return {
-                'n_estimators_rf': {'type': 'int', 'low': 50, 'high': 200},
-                'max_depth_rf': {'type': 'int', 'low': 5, 'high': 20},
-                'n_estimators_gb': {'type': 'int', 'low': 50, 'high': 150},
-                'learning_rate_gb': {'type': 'float', 'low': 0.01, 'high': 0.2},
-                'max_depth_gb': {'type': 'int', 'low': 3, 'high': 10},
-                'weights': {'type': 'categorical', 'choices': [
-                    [0.3, 0.3, 0.4],
-                    [0.4, 0.4, 0.2],
-                    [0.5, 0.3, 0.2]
-                ]}
-            }
-
-        elif model_type == 'transformer':
-            return {
-                'd_model': {'type': 'categorical', 'choices': [64, 128, 256]},
-                'n_heads': {'type': 'categorical', 'choices': [4, 8, 16]},
-                'n_layers': {'type': 'int', 'low': 2, 'high': 6},
-                'dropout': {'type': 'float', 'low': 0.1, 'high': 0.3},
-                'learning_rate': {'type': 'float', 'low': 1e-5, 'high': 1e-3, 'log': True},
-                'batch_size': {'type': 'categorical', 'choices': [16, 32, 64]}
+                'learning_rate': {'type': 'float', 'low': 1e-4, 'high': 1e-2, 'log': True},
+                'batch_size': {'type': 'categorical', 'choices': [16, 32, 64, 128]},
+                'max_steps': {'type': 'int', 'low': 500, 'high': 2000},
+                'input_size': {'type': 'categorical', 'choices': [24, 48, 96]}, # Multiples of horizon usually
+                'horizon': {'type': 'fixed', 'value': 24} # Default horizon, can be overridden
             }
 
         else:
@@ -158,7 +144,7 @@ class HyperparameterSearchAgent:
 
         return params
 
-    def objective_function(self, trial: optuna.Trial, symbol: str, model_type: str) -> float:
+    def objective_function(self, trial: optuna.Trial, symbol: str, model_type: str, data: Optional[pd.DataFrame] = None) -> float:
         """
         Objective function for hyperparameter optimization.
 
@@ -166,6 +152,7 @@ class HyperparameterSearchAgent:
             trial: Optuna trial object
             symbol: Stock symbol to optimize for
             model_type: Type of model to optimize
+            data: Optional DataFrame to use instead of fetching
 
         Returns:
             Validation metric (negative MAPE for minimization)
@@ -181,45 +168,67 @@ class HyperparameterSearchAgent:
             if self.gpu_services:
                 self.gpu_services.optimize_for_training()
 
-            # Train model with hyperparameters
-            if model_type == 'cnn_lstm':
-                model, results = self.data_pipeline.train_cnn_lstm(
-                    symbol=symbol,
-                    period='1y',
-                    epochs=min(hyperparams.get('epochs', 20), 20),  # Limit for HPO
-                    batch_size=hyperparams.get('batch_size', 32),
-                    verbose=0
-                )
-                metric = results['test_metrics']['mae']  # Minimize MAE
-
-            elif model_type == 'ensemble':
-                model, results = self.data_pipeline.train_ensemble(
-                    symbol=symbol,
-                    period='1y',
-                    verbose=0
-                )
-                metric = results['test_mae']
-
+            # Fetch data
+            if data is not None:
+                df = data
             else:
-                raise ValueError(f"Unsupported model type for HPO: {model_type}")
+                # We need to fetch data here because HPO agent runs independently
+                # Ideally, data should be passed in, but for now we fetch it
+                df = self.data_pipeline.fetch_stock_data(symbol, period='2y')
+            
+            if df is None or df.empty:
+                raise ValueError(f"No data found for {symbol}")
+
+            # Split data for validation
+            train_size = int(len(df) * 0.8)
+            train_df = df.iloc[:train_size]
+            val_df = df.iloc[train_size:]
+            
+            # Create DataSpec
+            data_spec = DataSpec(train_df=train_df, val_df=val_df, target_col='y')
+            
+            # Train model using GPUTrainingService
+            
+            # Train using service
+            result = self.training_service.train_model(
+                symbol=symbol,
+                model_type=model_type,
+                data=data_spec,
+                hyperparams=hyperparams,
+                job_id=f"hpo_{trial.number}"
+            )
+            
+            if result['status'] == 'failed':
+                raise Exception(result.get('error', 'Unknown error'))
+            
+            metrics = result.get('metrics', {})
+            # Use MAE as primary metric for optimization
+            metric = metrics.get('mae', 999.0)
+            
+            trial.set_user_attr('model_id', result.get('model_id'))
+            results = {'test_metrics': metrics}
 
             # Store trial results
             trial.set_user_attr('hyperparams', hyperparams)
             trial.set_user_attr('test_metrics', results.get('test_metrics', {}))
+            trial.set_user_attr('cv_metric', metric)
 
-            logger.info(f"Trial {trial.number}: {model_type} on {symbol} - MAE: {metric:.4f}")
+            logger.info(f"Trial {trial.number}: {model_type} on {symbol} - CV Metric: {metric:.4f}")
 
             return metric
 
         except Exception as e:
-            logger.error(f"Trial {trial.number} failed: {e}")
+            logger.error(f"Trial {trial.number} failed for {symbol} ({model_type}): {e}")
+            logger.error(f"Failed params: {hyperparams if 'hyperparams' in locals() else 'Unknown'}")
+            logger.error(traceback.format_exc())
             # Return high penalty for failed trials
             return 999.0
 
     def run_search(self, symbol: str, model_type: str,
                    max_trials: Optional[int] = None,
                    timeout_minutes: Optional[int] = None,
-                   n_trials: Optional[int] = None) -> Dict[str, Any]:
+                   n_trials: Optional[int] = None,
+                   data: Optional[pd.DataFrame] = None) -> Dict[str, Any]:
         """
         Run hyperparameter search for a symbol and model type.
 
@@ -229,6 +238,7 @@ class HyperparameterSearchAgent:
             max_trials: Maximum number of trials (overrides default)
             timeout_minutes: Timeout in minutes (overrides default)
             n_trials: Alias for max_trials
+            data: Optional DataFrame to use
 
         Returns:
             Search results dictionary
@@ -251,7 +261,7 @@ class HyperparameterSearchAgent:
         # Optimize
         try:
             study.optimize(
-                lambda trial: self.objective_function(trial, symbol, model_type),
+                lambda trial: self.objective_function(trial, symbol, model_type, data),
                 n_trials=max_trials,
                 timeout=timeout_minutes * 60,
                 n_jobs=self.n_jobs
@@ -264,6 +274,7 @@ class HyperparameterSearchAgent:
         best_trial = study.best_trial
         best_params = best_trial.user_attrs.get('hyperparams', {})
         test_metrics = best_trial.user_attrs.get('test_metrics', {})
+        best_model_id = best_trial.user_attrs.get('model_id')
 
         results = {
             'symbol': symbol,
@@ -271,11 +282,12 @@ class HyperparameterSearchAgent:
             'study_name': study_name,
             'best_value': best_trial.value,
             'best_params': best_params,
+            'best_model_id': best_model_id,
             'test_metrics': test_metrics,
             'n_trials': len(study.trials),
             'completed_at': datetime.now().isoformat(),
-            'search_duration_minutes': (datetime.now() - datetime.fromisoformat(
-                study_name.split('_')[-1].replace('_', 'T')
+            'search_duration_minutes': (datetime.now() - datetime.strptime(
+                "_".join(study_name.split('_')[-2:]), '%Y%m%d_%H%M%S'
             )).total_seconds() / 60
         }
 
@@ -373,7 +385,8 @@ class HyperparameterSearchAgent:
                     'best_val_mape': res.best_val_mape
                 })
             except Exception as e:
-                logger.error(f"Failed to train {family}: {e}")
+                logger.error(f"Failed to train {family} in ModelZoo HPO for {symbol}: {e}")
+                logger.error(traceback.format_exc())
         
         # Find best family
         best_family = None
@@ -422,7 +435,8 @@ class HyperparameterSearchAgent:
                     if pred_cols:
                         preds_list.append(res.val_preds[pred_cols[0]].values)
             except Exception as e:
-                logger.error(f"Failed to train {family}: {e}")
+                logger.error(f"Failed to train {family} for ensemble: {e}")
+                logger.error(traceback.format_exc())
 
         if not preds_list:
             return {'success': False, 'error': 'No models trained successfully'}

@@ -118,6 +118,21 @@ This will typically execute the following nodes:
 
 > In Phase 2+, the daily run will also apply regime tags and strategy selection.
 
+### 2.4 Web Dashboard
+
+To view the forecast results, evaluation metrics, and generated reports in a web interface:
+
+```bash
+streamlit run web_dashboard.py
+```
+
+This will launch a local web server (usually at http://localhost:8501) where you can explore:
+- **Overview**: System status and key metrics.
+- **Forecast Results**: Interactive charts of historical data and future forecasts.
+- **Evaluation Metrics**: Performance analysis (MAE, RMSE, etc.).
+- **Reports**: View and download LLM-generated analysis reports.
+- **System Status**: Health checks for the pipeline components.
+
 ---
 
 ## 3. Architecture & Roadmap

@@ -411,5 +411,14 @@ class DecisionAgent:
             if regimes.get('seasonal_regime') == 'sell_in_may':
                 decision['position_size_multiplier'] *= 0.8
                 decision['reason'] += " (Reduced 20% due to Seasonal weakness)"
+
+            # Volatility Regime
+            vol_regime = regimes.get('volatility_regime')
+            if vol_regime == 'high_volatility':
+                decision['position_size_multiplier'] *= 0.5
+                decision['reason'] += " (Reduced 50% due to High Volatility)"
+            elif vol_regime == 'elevated_volatility':
+                decision['position_size_multiplier'] *= 0.8
+                decision['reason'] += " (Reduced 20% due to Elevated Volatility)"
             
         return decision

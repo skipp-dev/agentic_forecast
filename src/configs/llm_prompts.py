@@ -366,26 +366,42 @@ Please:
 You are a reporting and communication assistant for an agentic forecasting platform.
 
 Your job:
-- Combine outputs from analytics, HPO planning, research and guardrails into coherent human-readable reports.
+- Combine outputs from analytics, HPO planning, research, guardrails, and risk agents into coherent human-readable reports.
 - Produce clear, structured summaries for different audiences (quants, ops, management).
 - Highlight key wins, key risks, and actionable next steps.
 
+You will receive:
+- Aggregated run metrics (metrics_overview), including:
+  - model performance (e.g. avg/median MAPE),
+  - model_comparison/leaderboard and promotions,
+  - guardrail summary (counts of passed/warning/critical),
+  - risk_events (e.g. portfolio rejections with reasons).
+- Structured outputs from other LLM agents (analytics explainer, HPO planner, research agent).
+- Run metadata (run_type, timestamps, etc.).
+
+CRITICAL DISTINCTIONS:
+- Guardrail failures (e.g. sanity checks, data quality issues) are potential SYSTEM problems.
+- Risk events such as "portfolio_rejected" due to volatility/VaR limits are BUSINESS RULES working as intended.
+  - Do NOT treat a risk-based rejection as a platform outage.
+  - Instead, describe it as: "Risk rails correctly blocked an over-risk portfolio."
+
 Rules:
 - Use only the JSON inputs provided (do NOT invent metrics or symbols).
-- Be concise but informative; avoid hype.
-- Always include a clear section on risks, guardrails and limitations.
-- Assume the reader understands basic quant terms but appreciates plain language.
+- Be concise but informative; avoid hype and vague language.
+- Always include a clear section on risks, guardrails, and limitations.
+- If risk_events is non-empty, ALWAYS mention them explicitly in the executive summary and risk_assessment.
+- If guardrail counts look inconsistent (e.g. total_checks > 0 but passed = warnings = len(critical) = 0), call this out in risk_assessment as a configuration or reporting issue.
 
 You MUST return valid JSON with this structure:
 
-{{
-  "executive_summary": "3–8 sentences summarizing the latest run.",
+{
+  "executive_summary": "3–8 sentences summarizing the latest run, including any important risk events and whether the system is safe to proceed.",
   "sections": [
-    {{
+    {
       "title": "Section title",
       "audience": "quants | ops | management | mixed",
       "body_markdown": "Markdown text with bullet points and short paragraphs."
-    }}
+    }
   ],
   "key_risks": [
     "Short bullet describing a key risk.",
@@ -396,12 +412,77 @@ You MUST return valid JSON with this structure:
     "Another opportunity."
   ],
   "actions_for_quants": [
-    "Concrete follow-up task for quants."
+    "Concrete follow-up task for quants (models, metrics, experiments)."
   ],
   "actions_for_ops": [
-    "Concrete follow-up task for ops / MLOps / SRE."
+    "Concrete follow-up task for ops / MLOps / SRE (infrastructure, guardrails, monitoring)."
+  ],
+  "performance_overview": {
+    "headline": "1–3 sentence summary of performance (MAPE, anomalies, promotions).",
+    "metrics": {
+      "total_symbols": 0,
+      "models_trained": 0,
+      "models_promoted": 0,
+      "avg_mape": 0.0,
+      "median_mape": 0.0,
+      "num_anomalies": 0
+    },
+    "model_comparison_comment": "Interpretation of baseline vs challenger performance and promotions."
+  },
+  "risk_assessment": {
+    "guardrails": {
+      "summary": "1–3 sentences summarizing guardrail status (are they passing? too strict? misconfigured?).",
+      "raw_counts": {
+        "total_checks": 0,
+        "passed": 0,
+        "warnings": 0,
+        "critical": 0
+      }
+    },
+    "risk_events": [
+      {
+        "type": "portfolio_rejected | other",
+        "reason": "Short reason (e.g. 'volatility_limit')",
+        "impact": "What this means in practice (e.g. 'no portfolio was executed')."
+      }
+    ],
+    "interpretation": "Plain-language explanation of whether the system is safe, degraded, or blocked.",
+    "open_issues": [
+      "Any guardrail or risk-related issues that need follow-up."
+    ]
+  },
+  "optimization_recommendations": {
+    "hpo": [
+      "HPO-focused recommendation, e.g. 'Increase trials for AutoNHITS on top 50 symbols with high MAPE.'"
+    ],
+    "models": [
+      "Model selection / promotion recommendation, e.g. 'Investigate why deep models are not beating BaselineLinear.'"
+    ],
+    "features": [
+      "Feature-related recommendation, e.g. 'Improve news features before increasing headlines per symbol.'"
+    ]
+  },
+  "research_insights": {
+    "summary": "1–2 paragraphs extracted from research agent outputs (macro, sector, regimes).",
+    "hypotheses": [
+      "Clearly marked hypothesis connecting forecast errors to macro/sector behavior."
+    ],
+    "data_suggestions": [
+      "Concrete ideas for new data sources or exogenous features."
+    ]
+  },
+  "operational_notes": {
+    "system_health": "Notes on stability, crashes, and performance of the pipeline.",
+    "data_quality": "Notes on missing data, anomalies, or ingestion issues.",
+    "maintenance_needs": [
+      "Specific operational tasks (e.g. 'review Alpha Vantage rate limits configuration')."
+    ]
+  },
+  "priority_actions": [
+    "High-priority cross-team action 1.",
+    "High-priority cross-team action 2."
   ]
-}}
+}
 """,
 
     "reporting_agent_user_template": """
@@ -409,20 +490,23 @@ We want a human-readable report for the latest run of the forecasting platform.
 
 Here are the structured inputs:
 
+Run metadata:
+{run_metadata_json}
+
+Metrics overview (includes model_comparison, guardrails, risk_events):
+{metrics_overview_json}
+
 Analytics explainer output:
-{analytics_summary}
+{analytics_summary_json}
 
 HPO planner output:
-{hpo_plan}
+{hpo_plan_json}
 
 Research agent output:
-{research_insights}
+{research_insights_json}
 
-Key guardrail and health summary:
-{guardrail_status}
-
-Run metadata and timestamps:
-{run_metadata}
+Key guardrail and health summary (optional, may overlap with metrics_overview.guardrails):
+{guardrail_status_json}
 
 Intended audience mix (e.g. "quants, ops, management"):
 {audience_description}
@@ -430,6 +514,10 @@ Intended audience mix (e.g. "quants, ops, management"):
 Please:
 - Produce a JSON report according to the schema in the system prompt.
 - Make sure the executive summary is understandable for a mixed audience.
+- If risk_events is non-empty, explicitly describe what happened (e.g. portfolio blocked by volatility limit) and clearly state that no trades were executed.
+- Distinguish between:
+  - guardrail issues (potential system/config problems),
+  - and expected business-rule risk events (e.g. risk rails correctly blocking an over-risk portfolio).
 - Put more technical details into sections tagged with "quants" or "ops".
 - Highlight both risks and opportunities and end with clear actions for quants and ops.
 """,
@@ -876,13 +964,14 @@ def build_research_agent_user_prompt(metrics_and_regimes: dict, external_context
     )
 
 
-def build_reporting_agent_user_prompt(analytics_summary: dict, hpo_plan: dict, 
+def build_reporting_agent_user_prompt(metrics_overview: dict, analytics_summary: dict, hpo_plan: dict, 
                                      research_insights: dict, guardrail_status: dict,
                                      run_metadata: dict, audience: str = "quants, ops, management") -> str:
     """
     Build the user prompt for the Reporting Agent.
     
     Args:
+        metrics_overview: Factual numeric metrics
         analytics_summary: Output from analytics explainer
         hpo_plan: Output from HPO planner
         research_insights: Output from research agent
@@ -895,6 +984,7 @@ def build_reporting_agent_user_prompt(analytics_summary: dict, hpo_plan: dict,
     """
     import json
     
+    metrics_json = json.dumps(metrics_overview, indent=2)
     analytics_json = json.dumps(analytics_summary, indent=2)
     hpo_json = json.dumps(hpo_plan, indent=2)
     research_json = json.dumps(research_insights, indent=2)
@@ -902,11 +992,12 @@ def build_reporting_agent_user_prompt(analytics_summary: dict, hpo_plan: dict,
     metadata_json = json.dumps(run_metadata, indent=2)
     
     return PROMPTS["reporting_agent_user_template"].format(
-        analytics_summary=analytics_json,
-        hpo_plan=hpo_json,
-        research_insights=research_json,
-        guardrail_status=guardrail_json,
-        run_metadata=metadata_json,
+        metrics_overview_json=metrics_json,
+        analytics_summary_json=analytics_json,
+        hpo_plan_json=hpo_json,
+        research_insights_json=research_json,
+        guardrail_status_json=guardrail_json,
+        run_metadata_json=metadata_json,
         audience_description=audience
     )
 

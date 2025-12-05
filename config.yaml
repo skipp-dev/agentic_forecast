@@ -19,6 +19,12 @@ training:
   # "auto" will use GPU if available, otherwise CPU
   device: "auto"
 
+# --- Reporting Configuration ---
+reporting:
+  dashboard_enabled: true
+  dashboard_dir: "web_dashboard"
+  email_enabled: false
+
 # --- IBKR Data Configuration ---
 ibkr:
   # IB TWS/Gateway connection settings
@@ -39,15 +45,15 @@ ibkr:
 # --- Scaling Configuration ---
 scaling:
   # Maximum number of symbols to process in a single run
-  # max_symbols: 3  # Run for all symbols in watchlist
-  max_symbols: null # Run for all symbols in watchlist
+  max_symbols: 3  # Run for all symbols in watchlist
+  # max_symbols: 1 # Run for all symbols in watchlist
 
   # Batch processing settings - Maximum throughput
   batch_size: 100  # Maximum symbols per batch
   batch_delay: 5   # Minimum delay between batches
 
   # Parallel processing - Maximum concurrency
-  max_workers: 10  # Maximum concurrent workers
+  max_workers: 5  # Maximum concurrent workers
 
   # Memory management - Maximum memory allocation
   max_memory_gb: 64  # Maximum memory usage before cleanup
@@ -55,7 +61,7 @@ scaling:
 # --- Alpha Vantage Configuration ---
 alpha_vantage:
   # API call rate limit (calls per minute) - Premium tier
-  rate_limit: 300
+  rate_limit: 150
   # Your Alpha Vantage API key (get from https://www.alphavantage.co/support/#api-key)
   api_key: "${ALPHA_VANTAGE_API_KEY}"
 
@@ -194,4 +200,41 @@ models:
   primary: ["BaselineLinear"]
   fallback: ["BaselineLinear"]
   priority_order: ["BaselineLinear"]
+
+# --- Quality & Governance Configuration ---
+quality:
+  targets:
+    accuracy_daily: 0.72
+    rmse_rel_improve: 0.10
+    hitrate_topN: 0.65
+  deploy_rules:
+    min_val_accuracy: 0.70
+    max_rmse: 0.9
+    require_human_for_trades: true
+  drift:
+    accuracy_window_hours: 4
+    min_accuracy: 0.70
+    actions:
+      - type: retrain
+      - type: rollback_if_val_drop_gt
+        threshold: 0.05
+  observability:
+    tracing: langsmith
+    require_trace: true
+    eval_suites: ["regression_eval_v1"]
+  trust_score:
+    weights:
+      accuracy: 0.4
+      regime: 0.3
+      guardrails: 0.2
+      data_quality: 0.1
+    thresholds:
+      mape_good: 0.05
+      mape_bad: 0.15
+      volatility_high: 0.5
+      volatility_medium: 0.3
+    penalties:
+      guardrail_flag: 0.2
+      regime_high_vol: 0.2
+      regime_medium_vol: 0.5
 

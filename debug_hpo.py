@@ -4,7 +4,7 @@ import logging
 import yaml
 import pandas as pd
 from src.core.run_context import RunType, RunContext
-from src.pipelines import run_weekend_hpo_pipeline
+from src.pipeline_orchestrator import run_weekend_hpo_pipeline
 
 # Configure logging
 logging.basicConfig(

@@ -71,14 +71,48 @@ def check_hpo_trigger(state: GraphState) -> str:
         # Check loop limits
         hpo_results = state.get('hpo_results', {})
         max_hpo_attempts = 1
+        
+        # Loop prevention: If HPO triggered but no results (failed), and we are looping, stop.
+        # We use supervisor_iterations as a proxy for "time passed" or "loops occurred".
+        # If we are deep in iterations (e.g. > 5) and still trying HPO with no results, abort HPO.
+        iterations = state.get('supervisor_iterations', 0)
+        
         if len(hpo_results) < max_hpo_attempts:
+             if iterations > 5 and not hpo_results:
+                 print("⚠️ HPO triggered but potential loop detected (iterations > 5, no results). Skipping HPO.")
+                 return "continue"
+                 
              print("🔄 Decision Agent triggered HPO loop")
              return "hpo"
     return "continue"
 
+def supervisor_routing(state: GraphState) -> str:
+    """
+    Routes execution based on Supervisor's decision.
+    """
+    return state.get('next_step', 'continue')
+
+def check_market_open(state: GraphState) -> str:
+    """
+    Checks if the market is open based on the market_status in state.
+    """
+    status = state.get('market_status', {})
+    # If status is missing, default to open (continue)
+    if not status:
+        return "continue"
+        
+    if status.get('is_trading_day', True):
+        return "continue"
+    else:
+        return "closed"
+
 def create_main_graph(config: dict):
     """
     Creates the main forecasting graph.
+    
+    NOTE: This graph currently uses static routing logic via `should_continue`.
+    The SupervisorAgent/OrchestratorAgent are intended for future dynamic routing
+    capabilities but are not yet active in the control flow.
     """
     graph = StateGraph(GraphState)
 
@@ -86,6 +120,7 @@ def create_main_graph(config: dict):
     decision_agent_node_with_config = partial(agent_nodes.decision_agent_node, config=config)
     guardrail_agent_node_with_config = partial(agent_nodes.guardrail_agent_node, config=config)
     portfolio_manager_node_with_config = partial(agent_nodes.portfolio_manager_node, config=config)
+    validate_portfolio_node_with_config = partial(agent_nodes.validate_portfolio_node, config=config)
 
     # Add nodes
     graph.add_node("load_data", data_nodes.load_data_node)
@@ -106,16 +141,37 @@ def create_main_graph(config: dict):
     graph.add_node("run_analytics", agent_nodes.analytics_agent_node)
     graph.add_node("llm_analytics", agent_nodes.llm_analytics_node)
     graph.add_node("interpret_forecasts", agent_nodes.forecast_agent_node)
+    
+    # Supervisor and Research nodes
+    graph.add_node("supervisor", partial(agent_nodes.supervisor_node, config=config))
+    graph.add_node("deep_research", agent_nodes.deep_research_node)
+    
     graph.add_node("make_decisions", decision_agent_node_with_config)
     graph.add_node("apply_guardrails", guardrail_agent_node_with_config)
     graph.add_node("execute_actions", execution_nodes.action_executor_node)
     graph.add_node("construct_portfolio", portfolio_manager_node_with_config)
+    graph.add_node("validate_portfolio", validate_portfolio_node_with_config)
     # graph.add_node("run_explainability", agent_nodes.explainability_agent_node)
     graph.add_node("generate_report", reporting_nodes.generate_report_node)
     graph.add_node("auto_documentation", agent_nodes.auto_documentation_node)
+    
+    # Market Calendar nodes
+    graph.add_node("market_calendar", agent_nodes.market_calendar_node)
+    graph.add_node("market_closed", utility_nodes.market_closed_node)
 
     # Define edges
-    graph.set_entry_point("load_data")
+    graph.set_entry_point("market_calendar")
+    
+    graph.add_conditional_edges(
+        "market_calendar",
+        check_market_open,
+        {
+            "continue": "load_data",
+            "closed": "market_closed"
+        }
+    )
+    graph.add_edge("market_closed", END)
+    
     graph.add_edge("load_data", "macro_data")
     graph.add_edge("macro_data", "detect_regimes")
     graph.add_edge("detect_regimes", "news_data")
@@ -145,7 +201,23 @@ def create_main_graph(config: dict):
     graph.add_edge("create_ensemble", "run_analytics")
     graph.add_edge("run_analytics", "llm_analytics")
     graph.add_edge("llm_analytics", "interpret_forecasts")
-    graph.add_edge("interpret_forecasts", "make_decisions")
+    
+    # Supervisor Routing
+    graph.add_edge("interpret_forecasts", "supervisor")
+    
+    graph.add_conditional_edges(
+        "supervisor",
+        supervisor_routing,
+        {
+            "continue": "make_decisions",
+            "deep_research": "deep_research",
+            "hpo": "llm_hpo_planning",
+            "retrain": "retrain_model",
+            "end": END
+        }
+    )
+    
+    graph.add_edge("deep_research", "make_decisions")
     
     graph.add_conditional_edges(
         "make_decisions",
@@ -160,7 +232,8 @@ def create_main_graph(config: dict):
     # graph.add_edge("run_explainability", "execute_actions")
     graph.add_edge("apply_guardrails", "execute_actions")
     graph.add_edge("execute_actions", "construct_portfolio")
-    graph.add_edge("construct_portfolio", "generate_report")
+    graph.add_edge("construct_portfolio", "validate_portfolio")
+    graph.add_edge("validate_portfolio", "generate_report")
     graph.add_edge("generate_report", "auto_documentation")
     graph.add_edge("auto_documentation", END)
 

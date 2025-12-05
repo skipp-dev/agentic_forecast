@@ -1,58 +1,50 @@
-from ..agents.drift_detection_agent import DriftDetectionAgent
-from ..agents.risk_assessment_agent import RiskAssessmentAgent
-from ..graphs.state import GraphState
+from typing import Dict, Any, List
+import logging
+from ..agents.drift_monitor_agent import DriftMonitorAgent
+from ..core.state import PipelineGraphState
+from ..gpu_services import get_gpu_services
 
-def drift_detection_node(state: GraphState) -> GraphState:
-    """
-    Detects data drift in the raw data and updates the state.
-    """
-    print("--- Node: Drift Detection ---")
-    
-    drift_detection_agent = DriftDetectionAgent()
-    drift_metrics = drift_detection_agent.detect_drift(state['raw_data'])
-    
-    # Convert DataFrame to serializable format for LangSmith tracing
-    if not drift_metrics.empty:
-        # Ensure index is symbol for efficient lookup
-        if 'symbol' in drift_metrics.columns:
-            drift_metrics = drift_metrics.set_index('symbol')
-        
-        drift_metrics.index = drift_metrics.index.astype(str)
-        state['drift_metrics'] = drift_metrics.to_dict('index')
-        
-        if 'drift_detected' in drift_metrics.columns and drift_metrics['drift_detected'].any():
-            state['drift_detected'] = True
-            print("[ALERT] Drift detected!")
-        else:
-            state['drift_detected'] = False
-            print("[OK] No significant drift detected.")
-    else:
-        state['drift_metrics'] = {}
-        state['drift_detected'] = False
-        print("[OK] No data for drift detection.")
-        
-    print(f"[OK] Drift detection complete.")
-    return state
+logger = logging.getLogger(__name__)
 
-def risk_assessment_node(state: GraphState) -> GraphState:
+def monitoring_node(state: PipelineGraphState) -> PipelineGraphState:
     """
-    Assesses the risk of the raw data and updates the state.
+    Runs the drift monitor agent to detect drift in data, performance, and spectral features.
     """
-    print("--- Node: Risk Assessment ---")
+    logger.info("--- Node: Monitoring Agent ---")
     
-    risk_assessment_agent = RiskAssessmentAgent()
-    risk_kpis = risk_assessment_agent.assess_risk(state['raw_data'])
+    # Initialize agent
+    gpu_services = get_gpu_services()
+    agent = DriftMonitorAgent(gpu_services=gpu_services)
     
-    # Convert DataFrame to serializable format for LangSmith tracing
-    if not risk_kpis.empty:
-        # Ensure index is symbol for efficient lookup
-        if 'symbol' in risk_kpis.columns:
-            risk_kpis = risk_kpis.set_index('symbol')
+    symbols = state.get('symbols', [])
+    drift_metrics = {}
+    drift_detected_symbols = []
+    
+    for symbol in symbols:
+        try:
+            # Run comprehensive drift check
+            result = agent.comprehensive_drift_check(symbol)
+            drift_metrics[symbol] = result
             
-        risk_kpis.index = risk_kpis.index.astype(str)
-        state['risk_kpis'] = risk_kpis.to_dict('index')
-    else:
-        state['risk_kpis'] = {}
+            # Determine if drift is detected based on the result
+            # Check if any specific drift type was detected
+            perf_drift = result.get('performance_drift', {}).get('drift_detected', False)
+            data_drift = result.get('data_drift', {}).get('drift_detected', False)
+            spec_drift = result.get('spectral_drift', {}).get('drift_detected', False)
+            regime_change = result.get('regime_change', False)
+            
+            if perf_drift or data_drift or spec_drift or regime_change:
+                drift_detected_symbols.append(symbol)
+                logger.info(f"Drift detected for {symbol}: Perf={perf_drift}, Data={data_drift}, Spec={spec_drift}, Regime={regime_change}")
+                
+        except Exception as e:
+            logger.error(f"Error monitoring drift for {symbol}: {e}")
+            
+    # Update state
+    state['drift_metrics'] = drift_metrics
+    state['drift_detected'] = drift_detected_symbols
     
-    print(f"[OK] Risk assessment complete.")
+    logger.info(f"Monitoring complete. Drift detected in: {drift_detected_symbols}")
+    
     return state
+

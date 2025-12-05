@@ -1,0 +1,2 @@
+symbol,model_family,mape,mae,model_id,artifact_path
+SOS,BaselineLinear,0.0,0.0,baseline_linear,

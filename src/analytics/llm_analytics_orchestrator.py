@@ -2,6 +2,7 @@
 import json
 from pathlib import Path
 from typing import Dict, Any
+from dataclasses import asdict
 
 # Load environment variables
 try:
@@ -10,7 +11,7 @@ try:
 except ImportError:
     pass
 
-from analytics.metrics_payload_builder import (
+from .metrics_payload_builder import (
     load_health_report,
     build_metrics_payload_from_health,
 )
@@ -37,14 +38,15 @@ def run_llm_analytics_explainer(
 
     agent = LLMAnalyticsExplainerAgent()
     explanation = agent.explain_metrics(metrics_payload)
+    explanation_dict = asdict(explanation)
 
     Path(output_json).parent.mkdir(parents=True, exist_ok=True)
     Path(output_json).write_text(
-        json.dumps(explanation, indent=2),
+        json.dumps(explanation_dict, indent=2),
         encoding="utf-8",
     )
 
-    md = build_markdown_from_explanation(explanation, metrics_payload)
+    md = build_markdown_from_explanation(explanation_dict, metrics_payload)
     Path(output_md).write_text(md, encoding="utf-8")
 
-    return explanation
+    return explanation_dict

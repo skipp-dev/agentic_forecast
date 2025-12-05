@@ -8,18 +8,6 @@ class LLMClient:
         self.api_key = api_key or os.getenv("OPENAI_API_KEY")
 
         if not self.api_key:
-            # Try to load from config/settings.toml
-            try:
-                # Assuming run from root
-                config_path = os.path.join(os.getcwd(), "config", "settings.toml")
-                if os.path.exists(config_path):
-                    with open(config_path, "r") as f:
-                        config = toml.load(f)
-                        self.api_key = config.get("openai", {}).get("api_key")
-            except Exception as e:
-                print(f"Warning: Failed to load OpenAI API key from settings.toml: {e}")
-
-        if not self.api_key:
             # Fallback for development/testing if no key is present,
             # but warn heavily or mock if needed.
             # For now, we'll just print a warning and let the call fail if used.

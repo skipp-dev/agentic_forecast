@@ -8,7 +8,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 
 from src.data.unified_ingestion_v2 import UnifiedDataIngestion
 
-async def test_data_ingestion():
+async def _run_data_ingestion():
     """Test data ingestion with a small subset of symbols."""
 
     print("🧪 Testing Data Ingestion with Limited Symbols")
@@ -91,5 +91,8 @@ async def test_data_ingestion():
         print("\n🔌 Cleaning up connections...")
         await data_ingestion.disconnect()
 
+def test_data_ingestion():
+    asyncio.run(_run_data_ingestion())
+
 if __name__ == "__main__":
-    asyncio.run(test_data_ingestion())
+    asyncio.run(_run_data_ingestion())

@@ -17,7 +17,7 @@ st.markdown("Real-time monitoring and forecast results for the agentic forecasti
 
 # Sidebar for navigation
 st.sidebar.header("Navigation")
-page = st.sidebar.radio("Select Page", ["Overview", "Forecast Results", "Evaluation Metrics", "System Status"])
+page = st.sidebar.radio("Select Page", ["Overview", "Forecast Results", "Evaluation Metrics", "Reports", "System Status"])
 
 # Function to load forecast results
 @st.cache_data
@@ -444,6 +444,57 @@ elif page == "Evaluation Metrics":
                     st.bar_chart(eval_df.set_index('symbol')['rmse'].head(20))
     else:
         st.error("No evaluation results found.")
+
+elif page == "Reports":
+    st.header("Generated Reports")
+
+    reports_dir = Path("results/reports")
+    if not reports_dir.exists():
+        st.warning("No reports directory found.")
+    else:
+        # Find all report files
+        report_files = list(reports_dir.glob("report_*.html")) + list(reports_dir.glob("report_*.md"))
+        report_files.sort(key=lambda x: x.stat().st_mtime, reverse=True)
+
+        if not report_files:
+            st.info("No reports generated yet.")
+        else:
+            # Selection box
+            selected_file = st.selectbox(
+                "Select Report",
+                report_files,
+                format_func=lambda x: f"{x.name} ({pd.to_datetime(x.stat().st_mtime, unit='s').strftime('%Y-%m-%d %H:%M:%S')})"
+            )
+
+            if selected_file:
+                st.markdown(f"### Viewing: {selected_file.name}")
+
+                try:
+                    with open(selected_file, "r", encoding="utf-8") as f:
+                        content = f.read()
+
+                    if selected_file.suffix == ".html":
+                        import streamlit.components.v1 as components
+                        components.html(content, height=800, scrolling=True)
+
+                        st.download_button(
+                            label="Download HTML Report",
+                            data=content,
+                            file_name=selected_file.name,
+                            mime="text/html"
+                        )
+
+                    elif selected_file.suffix == ".md":
+                        st.markdown(content)
+
+                        st.download_button(
+                            label="Download Markdown Report",
+                            data=content,
+                            file_name=selected_file.name,
+                            mime="text/markdown"
+                        )
+                except Exception as e:
+                    st.error(f"Error reading file: {e}")
 
 elif page == "System Status":
     st.header("Detailed System Status")

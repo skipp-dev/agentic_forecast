@@ -98,8 +98,42 @@ class RegimeAgent:
         # Seasonal Regime
         regimes['seasonal_regime'] = self._detect_seasonal_regime(target_dt)
 
+        # Volatility Regime
+        regimes['volatility_regime'] = self._detect_volatility_regime(target_dt, macro_data)
+
         logger.info("Detected regimes for %s: %s", target_date, regimes)
         return regimes
+
+    def _detect_volatility_regime(self, target_date: pd.Timestamp, macro_data: Dict[str, pd.DataFrame]) -> str:
+        """Detect volatility regime based on VIX."""
+        try:
+            if 'vix' not in macro_data:
+                return 'unknown'
+                
+            data = macro_data['vix']
+            if data.empty:
+                return 'unknown'
+
+            # Get latest VIX before target date
+            recent_data = data[data.index <= target_date]
+            if recent_data.empty:
+                return 'unknown'
+
+            # VIX is usually just the close price
+            current_vix = recent_data.iloc[-1]['vix'] if 'vix' in recent_data.columns else recent_data.iloc[-1][0]
+
+            if current_vix > 30:
+                return 'high_volatility'
+            elif current_vix > 20:
+                return 'elevated_volatility'
+            elif current_vix < 12:
+                return 'low_volatility'
+            else:
+                return 'normal_volatility'
+
+        except Exception as e:
+            logger.error("Error detecting volatility regime: %s", e)
+            return 'unknown'
 
     def _detect_rate_regime(self, target_date: pd.Timestamp, macro_data: Dict[str, pd.DataFrame]) -> str:
         """Detect interest rate regime."""

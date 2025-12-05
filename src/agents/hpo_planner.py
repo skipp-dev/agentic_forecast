@@ -3,6 +3,7 @@ import sys
 import pandas as pd
 import logging
 import time
+import traceback
 from typing import List, Dict, Any
 
 from models.model_zoo import ModelZoo, DataSpec, HPOConfig, ModelTrainingResult
@@ -180,7 +181,9 @@ class HPOAgent:
                     self.results[symbol]['AutoTFT'] = self.model_zoo.train_autotft(data_spec, hpo_config)
 
             except Exception as e:
-                logger.error(f"Error processing symbol {symbol}: {e}", exc_info=True)
+                logger.error(f"Error processing symbol {symbol}: {e}")
+                logger.error(f"Data shape: {df.shape if 'df' in locals() else 'Unknown'}")
+                logger.error(traceback.format_exc())
 
         self.print_summary()
 

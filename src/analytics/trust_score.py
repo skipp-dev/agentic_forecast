@@ -118,7 +118,7 @@ class TrustScoreCalculator:
             return 0.5 # Default
             
         kpis = risk_kpis[symbol]
-        volatility = kpis.get('volatility', 0.0)
+        volatility = kpis.get('annualized_volatility', 0.0)
         
         # Assuming volatility is annualized std dev. 
         if volatility > self.volatility_high:

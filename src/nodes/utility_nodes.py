@@ -30,3 +30,13 @@ def reporting_node(state: GraphState) -> GraphState:
     
     print("[OK] Generated report.")
     return state
+
+def market_closed_node(state: GraphState) -> GraphState:
+    """
+    Handles the case where the market is closed.
+    """
+    print("--- Node: Market Closed ---")
+    status = state.get('market_status', {})
+    reason = status.get('reason', 'unknown')
+    print(f"⛔ Market is closed ({reason}). Skipping full run.")
+    return state

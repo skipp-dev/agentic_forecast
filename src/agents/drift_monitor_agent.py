@@ -26,6 +26,8 @@ sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 from src.agents.monitoring_agent import MonitoringAgent
 from src.gpu_services import get_gpu_services
 from src.data_pipeline import DataPipeline
+from src.services.model_registry_service import ModelRegistryService
+from src.services.inference_service import InferenceService
 
 logger = logging.getLogger(__name__)
 
@@ -40,17 +42,21 @@ class DriftMonitorAgent(MonitoringAgent):
     - Regime change detection
     """
 
-    def __init__(self, gpu_services=None, data_pipeline=None):
+    def __init__(self, gpu_services=None, data_pipeline=None, model_registry=None, inference_service=None):
         """
         Initialize enhanced drift monitor agent.
 
         Args:
             gpu_services: GPU services instance for spectral analysis
             data_pipeline: Data pipeline instance
+            model_registry: Model registry service
+            inference_service: Inference service
         """
         super().__init__()
         self.gpu_services = gpu_services or get_gpu_services()
         self.data_pipeline = data_pipeline or DataPipeline()
+        self.model_registry = model_registry or ModelRegistryService()
+        self.inference_service = inference_service or InferenceService()
 
         # Drift detection thresholds
         self.thresholds = {
@@ -402,47 +408,141 @@ class DriftMonitorAgent(MonitoringAgent):
 
         return recommendations
 
-    # Mock data methods (replace with actual data access)
     def _get_recent_predictions(self, symbol: str) -> np.ndarray:
-        """Get recent model predictions (mock implementation)."""
-        # Mock data - replace with actual prediction retrieval
-        return np.random.randn(50) * 0.02 + 0.01
+        """Get recent model predictions using InferenceService."""
+        try:
+            # Get best model
+            best_model = self.model_registry.get_best_model(symbol, metric='mae', mode='min')
+            if not best_model:
+                logger.warning(f"No model found for {symbol}")
+                return np.array([])
+            
+            model_id = best_model['model_id']
+            model_type = best_model['model_type']
+            
+            # Fetch recent data for prediction context
+            # We need enough history for the model to predict
+            # Fetch last 60 days
+            df = self.data_pipeline.fetch_stock_data(symbol, period='3mo')
+            if df.empty:
+                return np.array([])
+                
+            # Predict for the last 30 days (simulating "recent" predictions)
+            # We iterate or just predict the last window?
+            # For simplicity, let's predict the last 'horizon' steps using the data before it.
+            # But drift monitoring usually looks at a window of predictions vs actuals.
+            # Let's try to predict the last 30 days using a rolling window or just one shot if horizon allows.
+            # If horizon is small (e.g. 5), we can't predict 30 days in one shot without autoregression.
+            # InferenceService.predict handles horizon.
+            
+            # Let's just predict the last 'horizon' days for now, as that's what we can reliably do without complex rolling logic here.
+            # Or better, just return empty if we can't easily reconstruct predictions.
+            # But we need predictions for performance drift.
+            
+            # Let's use the validation predictions stored in the model metadata if available?
+            # No, that's validation at training time. We want *recent* performance.
+            
+            # Let's skip complex prediction reconstruction and return empty for now, 
+            # effectively disabling performance drift check unless we have a better way.
+            # OR, we can use the 'val_preds' if we consider the training run "recent".
+            
+            # For now, let's try to predict the last 14 days.
+            horizon = 14
+            if len(df) > horizon * 2:
+                # Use data up to -horizon as context
+                context_df = df.iloc[:-horizon]
+                
+                result = self.inference_service.predict(
+                    symbol=symbol,
+                    model_id=model_id,
+                    model_type=model_type,
+                    data=context_df,
+                    horizon=horizon
+                )
+                
+                if result['status'] == 'success':
+                    preds = result['predictions']
+                    if isinstance(preds, pd.DataFrame):
+                        # Find prediction column
+                        cols = [c for c in preds.columns if c not in ['ds', 'unique_id', 'y']]
+                        if cols:
+                            return preds[cols[0]].values
+                    else:
+                        return np.array(preds)
+            
+            return np.array([])
+            
+        except Exception as e:
+            logger.error(f"Failed to get recent predictions for {symbol}: {e}")
+            return np.array([])
 
     def _get_recent_actuals(self, symbol: str) -> np.ndarray:
-        """Get recent actual values (mock implementation)."""
-        # Mock data - replace with actual market data
-        return np.random.randn(50) * 0.02
+        """Get recent actual values."""
+        try:
+            # Fetch last 14 days (matching prediction horizon above)
+            df = self.data_pipeline.fetch_stock_data(symbol, period='1mo')
+            if not df.empty:
+                # Return last 14 days 'close' or 'y'
+                if 'y' in df.columns:
+                    return df['y'].iloc[-14:].values
+                elif 'close' in df.columns:
+                    return df['close'].iloc[-14:].values
+            return np.array([])
+        except Exception as e:
+            logger.error(f"Failed to get recent actuals for {symbol}: {e}")
+            return np.array([])
 
     def _get_performance_baseline(self, symbol: str) -> Optional[Dict[str, float]]:
-        """Get performance baseline metrics."""
-        return self.performance_history.get(symbol)
+        """Get performance baseline metrics from Model Registry."""
+        try:
+            best_model = self.model_registry.get_best_model(symbol, metric='mae', mode='min')
+            if best_model and 'metrics' in best_model:
+                metrics = best_model['metrics']
+                # Ensure we have mae and rmse
+                if 'mae' in metrics:
+                    if 'rmse' not in metrics:
+                        metrics['rmse'] = metrics.get('mse', 0.0) ** 0.5
+                    return metrics
+            return None
+        except Exception as e:
+            logger.error(f"Failed to get performance baseline for {symbol}: {e}")
+            return None
 
     def _get_current_market_data(self, symbol: str) -> pd.DataFrame:
         """Get current market data for drift analysis."""
-        # Mock data - replace with actual data pipeline calls
-        dates = pd.date_range(end=datetime.now(), periods=100, freq='D')
-        data = {
-            'close': np.random.randn(100).cumsum() + 100,
-            'volume': np.random.randint(1000000, 5000000, 100),
-            'returns': np.random.randn(100) * 0.02
-        }
-        return pd.DataFrame(data, index=dates)
+        try:
+            # Fetch last 100 days
+            return self.data_pipeline.fetch_stock_data(symbol, period='6mo').iloc[-100:]
+        except Exception as e:
+            logger.error(f"Failed to get current market data for {symbol}: {e}")
+            return pd.DataFrame()
 
     def _get_historical_market_data(self, symbol: str) -> pd.DataFrame:
         """Get historical market data for comparison."""
-        # Mock historical data
-        dates = pd.date_range(end=datetime.now() - timedelta(days=100), periods=200, freq='D')
-        data = {
-            'close': np.random.randn(200).cumsum() + 95,  # Slightly different baseline
-            'volume': np.random.randint(800000, 4000000, 200),
-            'returns': np.random.randn(200) * 0.025
-        }
-        return pd.DataFrame(data, index=dates)
+        try:
+            # Fetch 2 years, take the first year (or older part)
+            df = self.data_pipeline.fetch_stock_data(symbol, period='2y')
+            if len(df) > 200:
+                # Return data from 100 days ago and older
+                return df.iloc[:-100]
+            return df
+        except Exception as e:
+            logger.error(f"Failed to get historical market data for {symbol}: {e}")
+            return pd.DataFrame()
 
     def _get_price_data_for_spectral_analysis(self, symbol: str) -> np.ndarray:
         """Get price data suitable for spectral analysis."""
-        # Mock price data
-        return np.random.randn(256) * 0.02 + 100  # 256 points for FFT
+        try:
+            df = self._get_current_market_data(symbol)
+            if not df.empty:
+                if 'close' in df.columns:
+                    return df['close'].values
+                elif 'y' in df.columns:
+                    return df['y'].values
+            return np.array([])
+        except Exception as e:
+            logger.error(f"Failed to get spectral data for {symbol}: {e}")
+            return np.array([])
 
 # Convenience functions
 def create_drift_monitor_agent():

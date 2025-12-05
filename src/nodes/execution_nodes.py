@@ -1,103 +1,108 @@
-from ..graphs.state import GraphState
-
+﻿from src.core.state import PipelineGraphState
 import pandas as pd
 import numpy as np
 import logging
 import time
 import os
 import sys
+import ta
 
 # Add root to path for models import
 sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..'))
 
-from ..graphs.state import GraphState
-from models.model_zoo import ModelZoo, DataSpec, ModelTrainingResult
+from models.model_zoo import DataSpec
 from sklearn.metrics import mean_absolute_percentage_error
 from sklearn.linear_model import LinearRegression
 
-# Conditional imports for heavy dependencies
-try:
-    if os.environ.get('SKIP_NEURALFORECAST', '').lower() not in ('true', '1', 'yes'):
-        import neuralforecast as nf
-        from neuralforecast import NeuralForecast
-        from neuralforecast.auto import AutoNHITS, AutoNBEATS, AutoDLinear, AutoTFT
-        from neuralforecast.models import NLinear
-        import torch
-        try:
-            from models.gnn_model import GNNModel
-        except ImportError:
-            GNNModel = None
-        _HAS_HEAVY_DEPS = True
-    else:
-        nf = NeuralForecast = AutoNHITS = AutoNBEATS = AutoDLinear = AutoTFT = NLinear = None
-        torch = None
-        GNNModel = None
-        _HAS_HEAVY_DEPS = False
-except Exception as e:
-    logger = logging.getLogger(__name__)
-    logger.error(f"Failed to import heavy dependencies: {e}")
-    nf = NeuralForecast = AutoNHITS = AutoNBEATS = AutoDLinear = AutoTFT = NLinear = None
-    torch = None
-    GNNModel = None
-    _HAS_HEAVY_DEPS = False
-
-# Ensure NLinear is defined even if imports fail or are skipped
-if 'NLinear' not in locals() and 'NLinear' not in globals():
-    NLinear = None
-if 'NeuralForecast' not in locals() and 'NeuralForecast' not in globals():
-    NeuralForecast = None
+# Import Services
+from src.services.training_service import GPUTrainingService
+from src.services.inference_service import InferenceService
+from src.services.model_registry_service import ModelRegistryService
+from src.alpha_vantage_client import AlphaVantageClient
+from src.agents.feature_engineer_agent import FeatureEngineerAgent
 
 logger = logging.getLogger(__name__)
 
-def _train_all_models(model_zoo: ModelZoo, data_spec: DataSpec, edge_index=None, node_features=None, symbol_to_idx=None, priority_order=None) -> dict[str, ModelTrainingResult]:
-    """Helper to train all available models in the zoo."""
-    results = {}
+def data_ingestion_node(state: PipelineGraphState) -> PipelineGraphState:
+    """
+    Ingests data for the requested symbols.
+    """
+    logger.info("--- Node: Data Ingestion ---")
+    symbols = state['symbols']
+    data_map = {}
     
-    # Use priority order if provided, otherwise use all core model families
-    if priority_order:
-        model_families = priority_order
-    else:
-        model_families = model_zoo.get_core_model_families()
+    try:
+        client = AlphaVantageClient()
+    except ValueError as e:
+        logger.error(f"Failed to initialize AlphaVantageClient: {e}")
+        # For testing purposes, if API key is missing, we might want to generate synthetic data
+        # But for now, let's just log error and return empty data
+        state['data'] = {}
+        return state
     
-    for family in model_families:
-        # Map config names to actual model family names
-        if family == "LSTM":
-            train_method_name = "train_lstm"
-            actual_family = "NHITS"
-        elif family == "AutoDLinear":
-            train_method_name = "train_autodlinear" 
-            actual_family = "DLinear"
-        elif family == "TFT":
-            train_method_name = "train_tft"
-            actual_family = "TFT"
-        elif family == "BaselineLinear":
-            train_method_name = "train_baseline_linear"
-            actual_family = "BaselineLinear"
-        else:
-            # For other families, use lowercase
-            train_method_name = f"train_{family.lower()}"
-            actual_family = family
-        
-        train_method = getattr(model_zoo, train_method_name, None)
-        if train_method:
-            try:
-                if actual_family == "GNN":
-                    # For GNN, update DataSpec with graph data
-                    data_spec.edge_index = edge_index
-                    data_spec.node_features = node_features
-                    data_spec.symbol_to_idx = symbol_to_idx
-                result = train_method(data_spec)
-                # Update the result to use the config name instead of actual family name
-                result.model_family = family
-                results[family] = result
-            except NotImplementedError:
-                logger.warning(f"Skipping not implemented model family: {family}")
-            except Exception as e:
-                logger.error(f"Error training {family}: {e}")
-                # Continue with other models instead of failing completely
-    return results
+    for symbol in symbols:
+        try:
+            logger.info(f"Fetching data for {symbol}...")
+            # Use full outputsize for production
+            df = client.get_daily_data(symbol, outputsize='full')
+            if df is not None and not df.empty:
+                data_map[symbol] = df
+                logger.info(f"Fetched {len(df)} rows for {symbol}")
+            else:
+                logger.warning(f"No data found for {symbol}")
+        except Exception as e:
+            logger.error(f"Error fetching data for {symbol}: {e}")
+            
+    state['data'] = data_map
+    return state
 
-def forecasting_node(state: GraphState) -> GraphState:
+def feature_engineering_node(state: PipelineGraphState) -> PipelineGraphState:
+    """
+    Generates features for the ingested data using FeatureEngineerAgent.
+    """
+    logger.info("--- Node: Feature Engineering ---")
+    data_map = state.get('data', {})
+    features_map = {}
+    
+    # Initialize Agent
+    try:
+        feature_agent = FeatureEngineerAgent()
+    except Exception as e:
+        logger.error(f"Failed to initialize FeatureEngineerAgent: {e}")
+        # Fallback or re-raise? Let's try to continue but it will likely fail inside the loop if agent is None
+        feature_agent = None
+
+    for symbol, df in data_map.items():
+        try:
+            logger.info(f"Generating features for {symbol}...")
+            
+            if feature_agent:
+                # Use the agent to engineer features
+                # We pass 'basic' and 'spectral' to enable GPU features
+                df_features = feature_agent.engineer_features(
+                    symbol=symbol, 
+                    data=df, 
+                    feature_sets=['basic', 'spectral']
+                )
+                features_map[symbol] = df_features
+            else:
+                 # Fallback to basic manual features if agent init failed
+                logger.warning(f"FeatureEngineerAgent not available, using basic fallback for {symbol}")
+                df_features = df.copy()
+                if 'close' in df_features.columns:
+                    df_features['rsi'] = ta.momentum.rsi(df_features['close'], window=14)
+                    features_map[symbol] = df_features
+                else:
+                    features_map[symbol] = df
+
+        except Exception as e:
+            logger.error(f"Error generating features for {symbol}: {e}")
+            features_map[symbol] = df 
+            
+    state['features'] = features_map
+    return state
+
+def forecasting_node(state: PipelineGraphState) -> PipelineGraphState:
     """
     Generates forecasts for each symbol using optimized models from HPO.
     Computes performance on validation set.
@@ -106,83 +111,30 @@ def forecasting_node(state: GraphState) -> GraphState:
     
     symbols = state['symbols']
     features = state['features']
-    hpo_results = state.get('hpo_results', {})
+    best_models = state.get('best_models', {})
     config = state.get('config', {})
+    run_type = state.get('run_type', 'DAILY')
     
     # Validate features
     if not features:
         logger.error("No features available for forecasting")
-        state['errors'].append("No features available for forecasting")
+        # state['errors'].append("No features available for forecasting") # errors not in TypedDict yet
         return state
     
     horizon = 3
-    
     forecasts = {}
     
-    model_zoo = ModelZoo()
-    
-    if 'edge_index' not in state:
-        # Construct graph
-        symbols = state['symbols']
-        symbol_to_idx = {symbol: i for i, symbol in enumerate(symbols)}
-        num_nodes = len(symbols)
-        edges = []
-        for i in range(num_nodes):
-            for j in range(num_nodes):
-                if i != j:
-                    edges.append([i, j])
-        
-        if _HAS_HEAVY_DEPS and torch is not None:
-            edge_index = torch.tensor(edges, dtype=torch.long).t().contiguous()
-        else:
-            edge_index = None  # Skip graph construction for backtest
-        
-        node_features_list = []
-        for symbol in symbols:
-            if symbol in features:
-                sym_data = features[symbol]
-                # Convert dict back to DataFrame if needed
-                if isinstance(sym_data, dict):
-                    sym_data = pd.DataFrame.from_dict(sym_data, orient='index')
-                    sym_data.index = pd.to_datetime(sym_data.index)
-                # Ensure 'y' column exists (target variable)
-                if 'y' not in sym_data.columns:
-                    # Create target variable if missing
-                    sym_data = sym_data.copy()
-                    sym_data['y'] = sym_data['close'].pct_change(1).shift(-1)
-                    sym_data = sym_data.dropna()
-                
-                if not sym_data.empty and 'y' in sym_data.columns:
-                    sym_features = sym_data['y'].iloc[-horizon:].values
-                    # Pad or truncate to ensure consistent length
-                    if len(sym_features) < horizon:
-                        # Pad with mean value
-                        mean_val = sym_features.mean() if len(sym_features) > 0 else 0.0
-                        padding = [mean_val] * (horizon - len(sym_features))
-                        sym_features = list(sym_features) + padding
-                    elif len(sym_features) > horizon:
-                        # Truncate to horizon
-                        sym_features = sym_features[-horizon:]
-                    node_features_list.append(sym_features)
-        
-        if node_features_list and _HAS_HEAVY_DEPS and torch is not None:
-            node_features = torch.tensor(node_features_list, dtype=torch.float)
-        else:
-            node_features = None
-        
-        state['edge_index'] = edge_index
-        state['node_features'] = node_features
-        state['symbol_to_idx'] = symbol_to_idx
-    
-    performance_summary = []
-    
+    # Initialize Services
+    training_service = GPUTrainingService()
+    inference_service = InferenceService()
+    model_registry = ModelRegistryService()
+
     for symbol in symbols:
         try:
             logger.info(f"Generating forecast for {symbol}...")
             
             if symbol not in features:
                 logger.error(f"No features found for {symbol}")
-                state['errors'].append(f"No features found for {symbol}")
                 continue
                 
             data = features[symbol]
@@ -197,14 +149,12 @@ def forecasting_node(state: GraphState) -> GraphState:
             missing_columns = [col for col in required_columns if col not in data.columns]
             if missing_columns:
                 logger.error(f"Missing required columns for {symbol}: {missing_columns}")
-                state['errors'].append(f"Missing required columns for {symbol}: {missing_columns}")
                 continue
             if data.empty:
                 logger.error(f"Empty data for {symbol}")
-                state['errors'].append(f"Empty data for {symbol}")
                 continue
             
-            # Prepare df for NeuralForecast - handle both date column and datetime index
+            # Prepare df for services
             df = data.copy()
             
             # If 'y' already exists (from FeatureAgent), drop it to avoid conflict when renaming 'close'
@@ -212,20 +162,16 @@ def forecasting_node(state: GraphState) -> GraphState:
                 df = df.drop(columns=['y'])
                 
             if 'date' in df.columns:
-                # Keep all columns, rename date and close
                 df = df.rename(columns={'date': 'ds', 'close': 'y'})
             else:
-                # Use datetime index
                 df['ds'] = df.index
                 df = df.rename(columns={'close': 'y'})
             
             df['unique_id'] = symbol
             df['ds'] = pd.to_datetime(df['ds'])
             
-            # Identify exogenous columns (all columns except ds, y, unique_id)
+            # Identify exogenous columns
             exog_cols = [col for col in df.columns if col not in ['ds', 'y', 'unique_id']]
-            
-            # Ensure we keep all columns
             cols_to_keep = ['unique_id', 'ds', 'y'] + exog_cols
             df = df[cols_to_keep]
             
@@ -235,401 +181,129 @@ def forecasting_node(state: GraphState) -> GraphState:
             
             symbol_forecasts = {}
             
-            if symbol in hpo_results and hpo_results[symbol]:
-                model_results = hpo_results[symbol]
-            else:
-                # Fallback: train models according to priority order
-                edge_index = state.get('edge_index')
-                symbol_to_idx = state.get('symbol_to_idx')
-                node_features = state.get('node_features')
-                # Use only BaselineLinear for short time series
-                priority_order = ["BaselineLinear"]
-
-                if node_features is None and edge_index is not None and symbol_to_idx is not None:
-                    node_features_list = []
-                    for sym in symbol_to_idx.keys():
-                        if sym in features:
-                            sym_data = features[sym]
-                            # Convert dict back to DataFrame if needed
-                            if isinstance(sym_data, dict):
-                                sym_data = pd.DataFrame.from_dict(sym_data, orient='index')
-                                sym_data.index = pd.to_datetime(sym_data.index)
-                            # Ensure 'y' column exists (target variable)
-                            if 'y' not in sym_data.columns:
-                                # Create target variable if missing
-                                sym_data = sym_data.copy()
-                                sym_data['y'] = sym_data['close'].pct_change(1).shift(-1)
-                                sym_data = sym_data.dropna()
-                            
-                            if not sym_data.empty and 'y' in sym_data.columns:
-                                sym_features = sym_data['y'].iloc[-horizon:].values
-                                # Pad or truncate to ensure consistent length
-                                if len(sym_features) < horizon:
-                                    # Pad with mean value
-                                    mean_val = sym_features.mean() if len(sym_features) > 0 else 0.0
-                                    padding = [mean_val] * (horizon - len(sym_features))
-                                    sym_features = list(sym_features) + padding
-                                elif len(sym_features) > horizon:
-                                    # Truncate to horizon
-                                    sym_features = sym_features[-horizon:]
-                                node_features_list.append(sym_features)
-                    if node_features_list:
-                        if _HAS_HEAVY_DEPS and torch is not None:
-                            node_features = torch.tensor(node_features_list, dtype=torch.float)
-                        else:
-                            node_features = None  # Skip for backtest
-
-                data_spec = DataSpec(
-                    job_id=f"forecast_{symbol}_{int(time.time())}",
-                    symbol_scope=symbol,
-                    train_df=train_df,
-                    val_df=val_df,
-                    feature_cols=['y'] + exog_cols,
-                    target_col='y',
-                    horizon=horizon,
-                    exog_cols=exog_cols
-                )
-                model_results = _train_all_models(model_zoo, data_spec, edge_index, node_features, symbol_to_idx, priority_order)
+            # Determine which models to run
+            models_to_run = []
             
-            for model_name, model_result in model_results.items():
-                if model_result:
-                    model_path = model_result.artifact_info.path if model_result.artifact_info else None
-                    # Allow BaselineLinear to proceed without a path, as it's retrained on the fly
-                    if not model_path and model_result.model_family != "BaselineLinear":
-                        logger.warning(f"No artifact path found for {model_name} - {symbol}")
-                        continue
-                        
-                    if model_result.model_family == "GNN":
-                        # Skip GNN for backtest mode
-                        if not _HAS_HEAVY_DEPS or GNNModel is None:
-                            logger.warning(f"Skipping GNN model for {symbol} - heavy dependencies not available")
-                            continue
-                        
-                        # Load GNN model
-                        if state.get('node_features') is not None:
-                            num_node_features = state['node_features'].shape[1]
-                        else:
-                            # Handle case where node_features is None, e.g., by setting a default or raising an error
-                            logger.warning("node_features is None. GNN model cannot be loaded without node features.")
-                            continue  # Skip to the next model
-
-                        model = GNNModel(
-                            num_node_features=num_node_features,
-                            hidden_channels=64,
-                            num_predictions=horizon
-                        )
-                        model.load_state_dict(torch.load(model_path))
-                        model.eval()
-                        with torch.no_grad():
-                            predictions = model(state['node_features'], state['edge_index'])
-                        # Create preds_val
-                        preds_list = []
-                        idx = state['symbol_to_idx'][symbol]
-                        symbol_preds = predictions[idx].numpy()
-                        last_ds = train_df['ds'].iloc[-1]
-                        for i in range(horizon):
-                            preds_list.append({
-                                'unique_id': symbol,
-                                'ds': last_ds + pd.Timedelta(days=i+1),
-                                'GNN': symbol_preds[i]
-                            })
-                        preds_val = pd.DataFrame(preds_list)
-                        column_name = "GNN"
-                        y_pred = preds_val[column_name].values
-                        mape_val = model_result.best_val_mape
-                        mae_val = model_result.best_val_mae
-                        model_family = model_result.model_family
-                        # For future forecast (same as validation for GNN)
-                        pred_future = symbol_preds
+            if symbol in best_models and best_models[symbol]:
+                # Use HPO results
+                # best_models[symbol] is expected to be a dict of {model_family: result_obj}
+                for family, res in best_models[symbol].items():
+                    # Handle both object and dict
+                    if isinstance(res, dict):
+                        model_id = res.get('best_model_id')
+                        mape_val = res.get('best_val_mape', 0.0)
                     else:
-                        # Load the trained model - handle different model types
-                        statsforecast_families = ["AutoARIMA", "AutoETS", "AutoTheta"]
-                        
-                        if model_result.model_family in statsforecast_families:
-                            # Load StatsForecast model
-                            from statsforecast import StatsForecast
-                            sf_inst = StatsForecast.load(path=model_path)
-                            column_name = model_result.model_family
-                            
-                            # Make predictions
-                            preds_val = sf_inst.predict(h=horizon)
-                            y_pred = preds_val[column_name].values
-                            mape_val = model_result.best_val_mape
-                            mae_val = model_result.best_val_mae
-                            model_family = model_result.model_family
-                            
-                            # For future forecast (same as validation for statsforecast)
-                            pred_future = y_pred
-                        else:
-                            # Load NeuralForecast model
-                            # Reset pred_future for this iteration to ensure we don't use stale data
-                            pred_future = None
-                            
-                            if model_result.model_family == "BaselineLinear":
-                                # BaselineLinear doesn't save models, retrain it
-                                # Check for heavy deps AND sufficient data length (need input_size + horizon roughly)
-                                min_samples = 2 * horizon + 2
-                                use_sklearn = (not _HAS_HEAVY_DEPS or NLinear is None or NeuralForecast is None) or (len(train_df) < min_samples)
-                                
-                                if use_sklearn:
-                                    # Use sklearn fallback
-                                    logger.info(f"Using sklearn LinearRegression fallback for {symbol} (retraining). Data len: {len(train_df)}")
-                                    
-                                    # Prepare data
-                                    X_train = np.arange(len(train_df)).reshape(-1, 1)
-                                    y_train = train_df['y'].values
-                                    
-                                    model = LinearRegression()
-                                    model.fit(X_train, y_train)
-                                    
-                                    column_name = 'LinearRegression'
-                                    
-                                    # Predict validation
-                                    X_val = np.arange(len(train_df), len(train_df) + len(val_df)).reshape(-1, 1)
-                                    y_pred = model.predict(X_val)
-                                    
-                                    mape_val = model_result.best_val_mape
-                                    mae_val = model_result.best_val_mae
-                                    model_family = model_result.model_family
-                                    
-                                    # For future forecast
-                                    X_future = np.arange(len(full_df), len(full_df) + horizon).reshape(-1, 1)
-                                    pred_future = model.predict(X_future)
-                                else:
-                                    # NLinear is already imported globally
-                                    input_size = 2 * horizon
-                                    nf_inst = NeuralForecast(models=[NLinear(h=horizon, input_size=input_size, max_steps=50)], freq="D")
-                                    # Prepare data for retraining
-                                    unique_id = symbol.replace(":", "_")
-                                    train_nf_local = pd.DataFrame({"unique_id": unique_id, "ds": train_df['ds'], "y": train_df['y']})
-                                    nf_inst.fit(df=train_nf_local)
-                                    column_name = 'NLinear'
-                            else:
-                                if NeuralForecast is None:
-                                    logger.error(f"NeuralForecast not available but model {model_result.model_family} requires it. Skipping.")
-                                    continue
-                                nf_inst = NeuralForecast.load(path=model_path)
-                                
-                                # Handle different model family naming
-                                if model_result.model_family == "LSTM":
-                                    column_name = "NHITS"
-                                elif model_result.model_family == "AutoDLinear":
-                                    column_name = "DLinear"
-                                elif model_result.model_family == "TFT":
-                                    column_name = "TFT"
-                                elif model_result.model_family == "Ensemble":
-                                    column_name = "ensemble"
-                                else:
-                                    column_name = model_result.model_family
-                            
-                            # Only execute NF prediction logic if we haven't already done sklearn fallback
-                            if pred_future is None:
-                                # Prepare future dataframe for prediction - ensure it matches training format
-                                
-                                # Determine correct unique_id and context dataframe
-                                if model_result.model_family == "BaselineLinear":
-                                    # BaselineLinear was trained with sanitized ID in this node
-                                    unique_id_formatted = symbol.replace(":", "_")
-                                    df_context = train_df.copy()
-                                    df_context['unique_id'] = unique_id_formatted
-                                else:
-                                    # Loaded models (AutoNHITS, etc.) were trained with raw symbol in HPO
-                                    unique_id_formatted = symbol
-                                    df_context = train_df
+                        model_id = getattr(res, 'best_model_id', None)
+                        mape_val = getattr(res, 'best_val_mape', 0.0)
+                    
+                    if model_id:
+                        models_to_run.append({
+                            'family': family,
+                            'model_id': model_id,
+                            'mape': mape_val
+                        })
+            else:
+                # Fallback: Train default models
+                logger.info(f"No HPO results for {symbol}, training default models.")
+                priority_order = ["BaselineLinear", "NLinear", "NHITS", "AutoDLinear"]
+                if run_type == 'WEEKEND_HPO':
+                    priority_order.extend(["TFT", "AutoNHITS", "AutoTFT", "AutoNBEATS", "graph_stgcnn"])
+                
+                for family in priority_order:
+                    # Create DataSpec for training
+                    data_spec = DataSpec(
+                        job_id=f"forecast_{symbol}_{int(time.time())}",
+                        symbol_scope=symbol,
+                        train_df=train_df,
+                        val_df=val_df,
+                        feature_cols=['y'] + exog_cols,
+                        target_col='y',
+                        horizon=horizon,
+                        exog_cols=exog_cols
+                    )
+                    
+                    res = training_service.train_model(
+                        symbol=symbol,
+                        model_type=family,
+                        data=data_spec,
+                        hyperparams={'horizon': horizon}
+                    )
+                    
+                    if res['status'] == 'success':
+                        metrics = res.get('metrics', {})
+                        models_to_run.append({
+                            'family': family,
+                            'model_id': res['model_id'],
+                            'mape': metrics.get('mae', 0.0) # Using MAE as proxy if MAPE missing
+                        })
+                    else:
+                        logger.error(f"Failed to train default {family} for {symbol}: {res.get('error')}")
 
-                                # Get the last date from training and create future dates with same frequency
-                                last_train_date = train_df['ds'].max()
-                                
-                                # Check model horizon to avoid "short futr_df" error
-                                model_h = nf_inst.models[0].h
-                                req_horizon = horizon
-                                effective_horizon = max(model_h, req_horizon)
-                                
-                                future_dates = pd.date_range(start=last_train_date + pd.Timedelta(days=1),
-                                                           periods=effective_horizon, freq='D')
+            # Generate Forecasts
+            for model_info in models_to_run:
+                family = model_info['family']
+                model_id = model_info['model_id']
+                mape_val = model_info['mape']
+                
+                pred_res = inference_service.predict(
+                    symbol=symbol,
+                    model_id=model_id,
+                    model_type=family,
+                    data=full_df,
+                    horizon=horizon
+                )
+                
+                pred_future = None
+                if pred_res['status'] == 'success':
+                    preds = pred_res['predictions']
+                    
+                    # Handle list of dicts (JSON serialization from service)
+                    if isinstance(preds, list) and len(preds) > 0 and isinstance(preds[0], dict):
+                        preds = pd.DataFrame(preds)
 
-                                # Create future dataframe with same unique_id as training
-                                futr_df = pd.DataFrame({
-                                    'unique_id': [unique_id_formatted] * effective_horizon,
-                                    'ds': future_dates
-                                })
+                    if isinstance(preds, pd.DataFrame):
+                        # Find prediction column
+                        pred_cols = [c for c in preds.columns if c not in ['ds', 'unique_id', 'y']]
+                        if pred_cols:
+                            pred_future = preds[pred_cols[0]].values
+                    else:
+                        pred_future = np.array(preds)
 
-                                # Add any exogenous variables if they exist in training data
-                                # NeuralForecast expects the same columns as training
-                                if len(train_df.columns) > 2:  # More than unique_id, ds, y
-                                    exogenous_cols = [col for col in train_df.columns if col not in ['unique_id', 'ds', 'y']]
-                                    for col in exogenous_cols:
-                                        if col in train_df.columns:
-                                            # Use last known value for exogenous variables
-                                            last_val = train_df[col].iloc[-1]
-                                            futr_df[col] = last_val
-
-                                try:
-                                    # Pass df_context to predict to ensure model has history
-                                    preds_val = nf_inst.predict(df=df_context, futr_df=futr_df)
-                                    
-                                    # Slice back if we extended the horizon
-                                    if effective_horizon > req_horizon:
-                                        preds_val = preds_val.iloc[:req_horizon]
-                                    
-                                    if model_result.model_family == "Ensemble":
-                                        y_pred = preds_val.select_dtypes(include=[float, int]).mean(axis=1).values
-                                    else:
-                                        y_pred = preds_val[column_name].values
-                                    mape_val = model_result.best_val_mape
-                                    mae_val = model_result.best_val_mae
-                                    model_family = model_result.model_family
-                                    
-                                    # Fit on full data for future forecast
-                                    # Ensure full_df has the correct unique_id if needed
-                                    if model_result.model_family == "BaselineLinear":
-                                         full_df_context = full_df.copy()
-                                         full_df_context['unique_id'] = unique_id_formatted
-                                    else:
-                                         full_df_context = full_df
-
-                                    nf_inst.fit(df=full_df_context)
-                                    # Create future dataframe with same format as training
-                                    # unique_id_formatted is already set correctly above
-
-                                    # Get the last date from full data and create future dates
-                                    last_full_date = full_df['ds'].max()
-                                    
-                                    # Check model horizon to avoid "short futr_df" error
-                                    model_h = nf_inst.models[0].h
-                                    req_horizon = horizon
-                                    effective_horizon = max(model_h, req_horizon)
-                                    
-                                    future_dates = pd.date_range(start=last_full_date + pd.Timedelta(days=1),
-                                                               periods=effective_horizon, freq='D')
-
-                                    futr_future_df = pd.DataFrame({
-                                        'unique_id': [unique_id_formatted] * effective_horizon,
-                                        'ds': future_dates
-                                    })
-
-                                    # Add any exogenous variables if they exist in training data
-                                    if len(full_df.columns) > 2:  # More than unique_id, ds, y
-                                        exogenous_cols = [col for col in full_df.columns if col not in ['unique_id', 'ds', 'y']]
-                                        for col in exogenous_cols:
-                                            if col in full_df.columns:
-                                                # Use last known value for exogenous variables
-                                                last_val = full_df[col].iloc[-1]
-                                                futr_future_df[col] = last_val
-
-                                    preds_future = nf_inst.predict(futr_df=futr_future_df)
-                                    
-                                    # Slice back if we extended the horizon
-                                    if effective_horizon > req_horizon:
-                                        preds_future = preds_future.iloc[:req_horizon]
-                                    if model_family == "Ensemble":
-                                        pred_future = preds_future.select_dtypes(include=[float, int]).mean(axis=1).values
-                                    else:
-                                        # Use the same column name mapping as above
-                                        if model_family == "LSTM":
-                                            future_column = "NHITS"
-                                        elif model_family == "AutoDLinear":
-                                            future_column = "DLinear"
-                                        elif model_family == "TFT":
-                                            future_column = "TFT"
-                                        elif model_family == "BaselineLinear":
-                                            future_column = "NLinear"
-                                        else:
-                                            future_column = model_family
-                                        pred_future = preds_future[future_column].values
-                                except Exception as e:
-                                    logger.error(f"Error predicting with {model_result.model_family} for {symbol}: {e}")
-                                    # Skip this model and continue with others
-                                    continue
+                    
+                    # Ensure pred_future length matches horizon
+                    if pred_future is not None:
+                        if len(pred_future) > horizon:
+                            pred_future = pred_future[:horizon]
+                        elif len(pred_future) < horizon:
+                            last_val = pred_future[-1]
+                            padding = np.full(horizon - len(pred_future), last_val)
+                            pred_future = np.concatenate([pred_future, padding])
                 else:
-                    # Fallback: train default BaselineLinear (skip for backtest if heavy deps not available)
-                    if not _HAS_HEAVY_DEPS or NLinear is None or NeuralForecast is None:
-                        # Use sklearn fallback
-                        logger.info(f"Using sklearn LinearRegression fallback for {symbol}")
-                        
-                        # Prepare data
+                    logger.warning(f"Inference failed for {family}: {pred_res.get('message')}")
+                    # Fallback to simple linear regression if inference fails
+                    try:
+                        logger.info(f"Using sklearn LinearRegression fallback for {symbol} due to inference failure")
                         X_train = np.arange(len(train_df)).reshape(-1, 1)
                         y_train = train_df['y'].values
-                        
                         model = LinearRegression()
                         model.fit(X_train, y_train)
-                        
-                        # Predict validation
-                        X_val = np.arange(len(train_df), len(train_df) + len(val_df)).reshape(-1, 1)
-                        y_pred = model.predict(X_val)
-                        
-                        mape_val = mean_absolute_percentage_error(val_df['y'], y_pred)
-                        mae_val = np.mean(np.abs(val_df['y'] - y_pred))
-                        column_name = 'LinearRegression'
-                        model_family = 'BaselineLinear'
-                        
-                        # Predict future
                         X_future = np.arange(len(full_df), len(full_df) + horizon).reshape(-1, 1)
                         pred_future = model.predict(X_future)
-                    else:
-                        # NLinear is already imported globally
-                        input_size = 2 * horizon
-                        model = NLinear(h=horizon, input_size=input_size, max_steps=50)
-                        nf_inst = NeuralForecast(models=[model], freq="D")
-                        nf_inst.fit(df=train_df)
-                        futr_df = pd.DataFrame({
-                            'unique_id': [symbol] * horizon,
-                            'ds': pd.date_range(start=val_df['ds'].iloc[-1], periods=horizon+1, freq='D')[1:]
-                        })
-                        preds_val = nf_inst.predict(futr_df=futr_df)
-                        y_pred = preds_val['NLinear'].values
-                        mape_val = 0.5  # Fallback, no validation mape available
-                        mae_val = 0.5
-                        column_name = 'NLinear'
-                        model_family = 'BaselineLinear'
-                        
-                        # Fit on full data for future forecast
-                        nf_inst.fit(df=full_df)
-                        preds_future = nf_inst.predict()
-                        pred_future = preds_future['NLinear'].values
-                
-                performance_summary.append({
-                    'symbol': symbol,
-                    'model_family': model_family,
-                    'mape': mape_val,
-                    'model_id': model_result.best_model_id if model_result else None
-                })
-                
-                # Create forecast df
-                ds_future = pd.date_range(start=data.index.max() + pd.Timedelta(days=1), periods=horizon, freq='D')
-                forecast_df = pd.DataFrame({'ds': ds_future, model_family: pred_future})
-                symbol_forecasts[model_family] = forecast_df
-            
+                    except Exception as e:
+                        logger.error(f"Fallback failed: {e}")
+
+                if pred_future is not None:
+                    ds_future = pd.date_range(start=data.index.max() + pd.Timedelta(days=1), periods=horizon, freq='D')
+                    forecast_df = pd.DataFrame({'ds': ds_future, family: pred_future})
+                    symbol_forecasts[family] = forecast_df
+                    
             forecasts[symbol] = symbol_forecasts
             logger.info(f"Generated forecast for {symbol}.")
+            
         except Exception as e:
             logger.error(f"Critical error forecasting for {symbol}: {e}")
-            state['errors'].append(f"Critical error forecasting for {symbol}: {e}")
             continue
     
     state['forecasts'] = forecasts
-    state['performance_summary'] = pd.DataFrame(performance_summary)
     logger.info("Generated all forecasts.")
-    return state
-
-def action_executor_node(state: GraphState) -> GraphState:
-    """
-    Executes the recommended actions, such as promoting a model.
-    """
-    logger.info("--- Node: Action Executor ---")
-    
-    config = state.get('config', {})
-    model_zoo = ModelZoo()
-    executed_actions = []
-    
-    for action in state['recommended_actions']:
-        if action.startswith("Promote"):
-            parts = action.split(" ")
-            model_family = parts[1]
-            symbol = parts[3]
-            model_zoo.promote_model(model_family, symbol)
-            executed_actions.append(action)
-            
-    state['executed_actions'] = executed_actions
-    logger.info(f"Executed {len(state['executed_actions'])} actions.")
     return state

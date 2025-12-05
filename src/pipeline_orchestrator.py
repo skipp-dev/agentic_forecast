@@ -49,6 +49,25 @@ def run_pipeline(ctx: RunContext, symbols: list, config: dict):
         os.environ['SKIP_NEURALFORECAST'] = 'true'
         os.environ['RUN_TYPE'] = 'BACKTEST'
         logger.info("BACKTEST mode: Skipping NeuralForecast imports")
+        
+        # Import BacktestExecutor
+        from src.backtesting.backtest_executor import BacktestExecutor
+        
+        # Determine dates from config or defaults
+        start_date = config.get('backtest', {}).get('start_date', '2023-01-01')
+        end_date = config.get('backtest', {}).get('end_date', '2023-01-10')
+        step_days = config.get('backtest', {}).get('step_days', 1)
+        
+        app = create_main_graph(config)
+        initial_state = build_initial_state(symbols, config, ctx)
+        
+        executor = BacktestExecutor(app, start_date, end_date, step_days)
+        results = executor.run(initial_state)
+        executor.save_results()
+        
+        logger.info("Backtest completed.")
+        return
+
     elif ctx.run_type == RunType.WEEKEND_HPO:
         os.environ['RUN_TYPE'] = 'WEEKEND_HPO'
     else:

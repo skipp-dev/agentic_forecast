@@ -100,6 +100,20 @@ The system will autonomously:
 **Expected Runtime**: ~30 minutes for full universe
 **Success Indicators**: DA=1.000, MAE=0.000, 282 models trained
 
+### Visualizing Results
+
+After the pipeline completes, you can launch the interactive dashboard:
+
+```bash
+streamlit run web_dashboard.py
+```
+
+This provides:
+- **Real-time status** of the system
+- **Interactive charts** for all 576 symbols
+- **Performance metrics** and evaluation reports
+- **LLM-generated insights**
+
 ---
 
 ## 🏗️ Architecture Deep Dive

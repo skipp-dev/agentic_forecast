@@ -19,7 +19,8 @@ import logging
 import yaml
 import numpy as np
 import pandas as pd
-from typing import Dict, List, Any, Optional
+from typing import Dict, List, Any, Optional, Union
+from src.utils.time_machine import TimeMachine
 
 # Add project root to path
 project_root = Path(__file__).parent
@@ -85,7 +86,8 @@ class FeatureEngineer:
 
     def engineer_features_for_symbol(self, symbol: str, data: pd.DataFrame,
                                    experiment: str = "baseline",
-                                   dynamic_groups: Optional[List[str]] = None) -> pd.DataFrame:
+                                   dynamic_groups: Optional[List[str]] = None,
+                                   cutoff_date: Optional[Union[str, pd.Timestamp]] = None) -> pd.DataFrame:
         """
         Engineer features for a single symbol.
 
@@ -94,6 +96,7 @@ class FeatureEngineer:
             data: Raw OHLCV data
             experiment: Feature experiment to use
             dynamic_groups: Optional list of feature groups to use instead of experiment config
+            cutoff_date: Optional strict cutoff date for data access.
 
         Returns:
             DataFrame with engineered features
@@ -110,6 +113,12 @@ class FeatureEngineer:
 
         # Start with raw data
         features_df = data.copy()
+        
+        # Apply TimeMachine if cutoff_date is provided
+        if cutoff_date:
+            tm = TimeMachine(features_df)
+            features_df = tm.get_data_as_of(cutoff_date)
+            logger.info(f"⏳ Applied time cutoff {cutoff_date} for {symbol}. Rows: {len(data)} -> {len(features_df)}")
 
         # Get feature groups - use dynamic_groups if provided, otherwise from experiment
         if dynamic_groups is not None:

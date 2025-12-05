@@ -28,20 +28,19 @@ class TestEnsembleCombinations(unittest.TestCase):
         mock_res_nhits = MagicMock()
         mock_res_nhits.val_preds = pd.DataFrame({
             "ds": self.data_spec.val_df["ds"],
-            "NHITS": self.data_spec.val_df["y"] * 1.1  # 10% error
+            "AutoNHITS": self.data_spec.val_df["y"] * 1.1  # 10% error
         })
-        mock_zoo.train_lstm.return_value = mock_res_nhits
         mock_zoo.train_autonhits.return_value = mock_res_nhits
         
-        mock_res_tft = MagicMock()
-        mock_res_tft.val_preds = pd.DataFrame({
+        mock_res_nbeats = MagicMock()
+        mock_res_nbeats.val_preds = pd.DataFrame({
             "ds": self.data_spec.val_df["ds"],
-            "TFT": self.data_spec.val_df["y"] * 0.9  # -10% error
+            "AutoNBEATS": self.data_spec.val_df["y"] * 0.9  # -10% error
         })
-        mock_zoo.train_tft.return_value = mock_res_tft
+        mock_zoo.train_autonbeats.return_value = mock_res_nbeats
         
         agent = HyperparameterSearchAgent(model_zoo=mock_zoo)
-        result = agent.test_ensemble_combinations(symbol="ENS", data_spec=self.data_spec, families=["NHITS","TFT"])
+        result = agent.test_ensemble_combinations(symbol="ENS", data_spec=self.data_spec, families=["AutoNHITS","AutoNBEATS"])
         
         self.assertTrue(result["success"])
         self.assertIn("ensemble_mape", result)

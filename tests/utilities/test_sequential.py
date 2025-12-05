@@ -9,7 +9,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 
 from src.data.unified_ingestion_v2 import UnifiedDataIngestion
 
-async def test_sequential_ingestion():
+async def _run_sequential_ingestion():
     """Test data ingestion with sequential processing."""
 
     print("🧪 Testing Sequential Data Ingestion")
@@ -85,5 +85,8 @@ async def test_sequential_ingestion():
         else:
             print(f"   {symbol}: ❌ {result}")
 
+def test_sequential_ingestion():
+    asyncio.run(_run_sequential_ingestion())
+
 if __name__ == "__main__":
-    asyncio.run(test_sequential_ingestion())
+    asyncio.run(_run_sequential_ingestion())

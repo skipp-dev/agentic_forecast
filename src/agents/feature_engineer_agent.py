@@ -23,6 +23,7 @@ sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 from src.agents.feature_agent import FeatureAgent
 from src.gpu_services import get_gpu_services
 from src.data_pipeline import DataPipeline
+from src.services.feature_store_service import FeatureStoreService
 
 logger = logging.getLogger(__name__)
 
@@ -38,17 +39,19 @@ class FeatureEngineerAgent(FeatureAgent):
     - Real-time feature engineering
     """
 
-    def __init__(self, gpu_services=None, data_pipeline=None):
+    def __init__(self, gpu_services=None, data_pipeline=None, feature_store=None):
         """
         Initialize feature engineer agent.
 
         Args:
             gpu_services: GPU services instance for spectral analysis
             data_pipeline: Data pipeline instance
+            feature_store: Feature store service instance
         """
         super().__init__()
         self.gpu_services = gpu_services or get_gpu_services()
         self.data_pipeline = data_pipeline or DataPipeline()
+        self.feature_store = feature_store or FeatureStoreService()
 
         # Feature engineering configuration
         self.feature_sets = {
@@ -105,9 +108,34 @@ class FeatureEngineerAgent(FeatureAgent):
         # Clean and normalize features
         features_df = self._clean_and_normalize_features(features_df)
 
+        # Store features in FeatureStore
+        self.feature_store.store_features(symbol, features_df, feature_type="engineered")
+
         logger.info(f"Feature engineering complete: {features_df.shape[1]} features created")
 
         return features_df
+
+    def get_or_create_features(self, symbol: str, data: pd.DataFrame = None,
+                              feature_sets: List[str] = None, force_refresh: bool = False) -> pd.DataFrame:
+        """
+        Get features from store or create them if missing/forced.
+        
+        Args:
+            symbol: Stock symbol
+            data: Raw market data (optional)
+            feature_sets: List of feature sets to include
+            force_refresh: Whether to force re-engineering
+            
+        Returns:
+            DataFrame with engineered features
+        """
+        if not force_refresh:
+            cached_features = self.feature_store.get_features(symbol, feature_type="engineered")
+            if cached_features is not None:
+                logger.info(f"Retrieved cached features for {symbol}")
+                return cached_features
+                
+        return self.engineer_features(symbol, data, feature_sets)
 
     def _validate_ohlc_data(self, data: pd.DataFrame) -> pd.DataFrame:
         """
@@ -328,8 +356,13 @@ class FeatureEngineerAgent(FeatureAgent):
         # Remove infinite values
         df = df.replace([np.inf, -np.inf], np.nan)
 
-        # Forward fill then backward fill missing values
-        df = df.ffill().bfill()
+        # Forward fill only to prevent look-ahead bias
+        # STRICTLY NO BACKWARD FILLING (.bfill) AS IT LEAKS FUTURE DATA
+        df = df.ffill()
+
+        # Drop initial rows that contain NaNs (due to lag features like SMA, RSI)
+        # It is better to lose early data points than to fabricate them
+        df = df.dropna()
 
         # Remove columns with all NaN values
         df = df.dropna(axis=1, how='all')
@@ -462,16 +495,9 @@ class FeatureEngineerAgent(FeatureAgent):
             return pd.DataFrame(data)
         except Exception as e:
             logger.error(f"Failed to fetch market data for {symbol}: {e}")
-            # Return mock data for testing
-            dates = pd.date_range(end=datetime.now(), periods=500, freq='D')
-            mock_data = {
-                'open': np.random.randn(500).cumsum() + 100,
-                'high': np.random.randn(500).cumsum() + 105,
-                'low': np.random.randn(500).cumsum() + 95,
-                'close': np.random.randn(500).cumsum() + 100,
-                'volume': np.random.randint(1000000, 10000000, 500)
-            }
-            return pd.DataFrame(mock_data, index=dates)
+            # CRITICAL: Do not fallback to mock data in production/agentic flow
+            # This prevents "poisoning" the model registry with models trained on random noise
+            raise e
 
 # Convenience functions
 def create_feature_engineer_agent():

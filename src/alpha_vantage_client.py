@@ -54,7 +54,7 @@ class AlphaVantageClient:
 
         # Rate limiting: 300 calls per minute for premium
         # We use a slightly conservative limit to avoid hitting the hard cap
-        self.rate_limit = 290  # Buffer for safety
+        self.rate_limit = 150  # Buffer for safety
         self.time_window = 60  # seconds
         self.call_times = []
         
@@ -263,33 +263,50 @@ class AlphaVantageClient:
         self._check_rate_limit()
 
         try:
-            # Map indicator names to method calls
-            indicator_methods = {
-                'SMA': self.ti.get_sma,
-                'EMA': self.ti.get_ema,
-                'RSI': self.ti.get_rsi,
-                'MACD': self.ti.get_macd,
-                'BBANDS': self.ti.get_bbands,
-                'STOCH': self.ti.get_stoch,
-                'ADX': self.ti.get_adx,
-                'CCI': self.ti.get_cci,
-                'AROON': self.ti.get_aroon,
-                'MFI': self.ti.get_mfi,
-                'ROC': self.ti.get_roc,
-                'WILLR': self.ti.get_willr,
-                'OBV': self.ti.get_obv,
-                'ATR': self.ti.get_atr
+            params = {
+                'function': indicator,
+                'symbol': symbol,
+                'interval': interval,
             }
+            # Add kwargs to params (e.g. time_period, series_type)
+            params.update(kwargs)
+            
+            # Default series_type if needed (SMA, EMA, etc usually need it)
+            if 'series_type' not in params and indicator in ['SMA', 'EMA', 'RSI', 'MACD', 'BBANDS', 'ADX', 'CCI', 'AROON', 'MFI', 'ROC', 'WILLR', 'ATR']:
+                params['series_type'] = 'close'
 
-            if indicator not in indicator_methods:
-                raise ValueError(f"Unsupported indicator: {indicator}")
+            data = self._make_request(params)
+            
+            # Parse response
+            # Response keys are usually "Technical Analysis: {INDICATOR}"
+            data_key = None
+            for key in data.keys():
+                if "Technical Analysis" in key:
+                    data_key = key
+                    break
+            
+            if not data_key:
+                # Check for error
+                if 'Error Message' in data:
+                     raise Exception(data['Error Message'])
+                
+                # Try to find any key that looks like data (not Meta Data)
+                keys = [k for k in data.keys() if k != 'Meta Data']
+                if keys:
+                    data_key = keys[0]
+                else:
+                    raise ValueError(f"Could not find data key in response for {indicator}")
 
-            method = indicator_methods[indicator]
-            data, meta_data = method(symbol=symbol, interval=interval, **kwargs)
-            data.index = pd.to_datetime(data.index)
-            data = data.sort_index()
+            df = pd.DataFrame.from_dict(data[data_key], orient='index')
+            df.index = pd.to_datetime(df.index)
+            df = df.sort_index()
+            
+            # Convert columns to numeric
+            df = df.apply(pd.to_numeric)
+            
             logger.info(f"Fetched {indicator} data for {symbol}")
-            return data
+            return df
+            
         except Exception as e:
             logger.error(f"Error fetching {indicator} for {symbol}: {e}")
             return pd.DataFrame()
@@ -422,8 +439,23 @@ def get_stock_data(symbol: str, period: str = '2y', interval: str = 'daily') -> 
 
         # Filter by period if needed
         if period != 'max':
-            years = int(period[:-1])
-            cutoff_date = pd.Timestamp.now() - pd.DateOffset(years=years)
+            if period.endswith('y'):
+                years = int(period[:-1])
+                cutoff_date = pd.Timestamp.now() - pd.DateOffset(years=years)
+            elif period.endswith('mo'):
+                months = int(period[:-2])
+                cutoff_date = pd.Timestamp.now() - pd.DateOffset(months=months)
+            elif period.endswith('m'):
+                months = int(period[:-1])
+                cutoff_date = pd.Timestamp.now() - pd.DateOffset(months=months)
+            elif period.endswith('d'):
+                days = int(period[:-1])
+                cutoff_date = pd.Timestamp.now() - pd.DateOffset(days=days)
+            else:
+                # Default fallback or error
+                logger.warning(f"Unknown period format: {period}. Using full data.")
+                cutoff_date = pd.Timestamp.min
+
             data = data[data.index >= cutoff_date]
 
     else:

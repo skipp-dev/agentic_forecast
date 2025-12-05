@@ -1,22 +1,44 @@
 # services/metrics_service.py
 """
-Metrics service for tracking LLM usage and system metrics.
+Metrics Service
 
-Provides functionality to record LLM calls, report generation, and other system metrics.
+Service for tracking LLM usage, system metrics, and time-series data.
+Supports InfluxDB for production time-series and SQLite for local/fallback.
+Maintains JSON-based storage for legacy LLM/Report metrics.
 """
 
 import json
 import os
 import time
-from typing import Dict, Any, Optional
+import logging
+import sqlite3
+from typing import Dict, List, Any, Optional, Union
 from collections import defaultdict
 from datetime import datetime
+from pathlib import Path
 
+# Optional InfluxDB import
+try:
+    from influxdb_client import InfluxDBClient, Point, WriteOptions
+    from influxdb_client.client.write_api import SYNCHRONOUS
+    _HAS_INFLUX = True
+except ImportError:
+    _HAS_INFLUX = False
+
+logger = logging.getLogger(__name__)
 
 class MetricsService:
     """Service for tracking and storing system metrics."""
 
-    def __init__(self, metrics_dir: str = "data/metrics"):
+    def __init__(self, 
+                 metrics_dir: str = "data/metrics",
+                 storage_type: str = "auto", 
+                 sqlite_path: str = "data/metrics.db",
+                 influx_url: Optional[str] = None,
+                 influx_token: Optional[str] = None,
+                 influx_org: Optional[str] = None,
+                 influx_bucket: Optional[str] = None):
+        
         self.metrics_dir = metrics_dir
         self.llm_metrics_file = os.path.join(metrics_dir, "llm_metrics.json")
         self.report_metrics_file = os.path.join(metrics_dir, "report_metrics.json")
@@ -24,9 +46,115 @@ class MetricsService:
         # Ensure metrics directory exists
         os.makedirs(metrics_dir, exist_ok=True)
 
-        # Load existing metrics
+        # Load existing legacy metrics
         self.llm_metrics = self._load_metrics(self.llm_metrics_file)
         self.report_metrics = self._load_metrics(self.report_metrics_file)
+        
+        # Initialize Time-Series Storage
+        self.storage_type = storage_type
+        self.sqlite_path = Path(sqlite_path)
+        self.influx_client = None
+        self.write_api = None
+        self.query_api = None
+        self.influx_bucket = influx_bucket
+        
+        self._init_time_series_storage(influx_url, influx_token, influx_org)
+
+    def _init_time_series_storage(self, influx_url, influx_token, influx_org):
+        """Initialize the time-series storage backend."""
+        # Determine storage backend
+        if self.storage_type == "auto":
+            if _HAS_INFLUX and influx_url and influx_token:
+                self.storage_type = "influx"
+            else:
+                self.storage_type = "sqlite"
+        
+        if self.storage_type == "influx":
+            if not _HAS_INFLUX:
+                logger.warning("InfluxDB requested but client not installed. Falling back to SQLite.")
+                self.storage_type = "sqlite"
+            else:
+                try:
+                    self.influx_client = InfluxDBClient(url=influx_url, token=influx_token, org=influx_org)
+                    self.write_api = self.influx_client.write_api(write_options=SYNCHRONOUS)
+                    self.query_api = self.influx_client.query_api()
+                    logger.info(f"Connected to InfluxDB at {influx_url}")
+                except Exception as e:
+                    logger.error(f"Failed to connect to InfluxDB: {e}. Falling back to SQLite.")
+                    self.storage_type = "sqlite"
+        
+        if self.storage_type == "sqlite":
+            self._init_sqlite()
+            logger.info(f"Using SQLite metrics storage at {self.sqlite_path}")
+
+    def _init_sqlite(self):
+        """Initialize SQLite schema."""
+        self.sqlite_path.parent.mkdir(parents=True, exist_ok=True)
+        conn = sqlite3.connect(self.sqlite_path)
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+        CREATE TABLE IF NOT EXISTS metrics (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            timestamp TEXT NOT NULL,
+            measurement TEXT NOT NULL,
+            symbol TEXT,
+            tags_json TEXT,
+            fields_json TEXT
+        )
+        ''')
+        
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_metrics_ts ON metrics(timestamp)')
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_metrics_symbol ON metrics(symbol)')
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_metrics_measurement ON metrics(measurement)')
+        
+        conn.commit()
+        conn.close()
+
+    def store_metric(self, 
+                     measurement: str, 
+                     fields: Dict[str, Any], 
+                     tags: Optional[Dict[str, str]] = None, 
+                     timestamp: Optional[datetime] = None):
+        """
+        Store a metric point in the time-series database.
+        
+        Args:
+            measurement: Name of the measurement (e.g., 'model_performance').
+            fields: Dictionary of values (e.g., {'mae': 0.5, 'mse': 0.8}).
+            tags: Dictionary of tags (e.g., {'symbol': 'AAPL', 'model': 'NLinear'}).
+            timestamp: Timestamp of the metric. Defaults to now.
+        """
+        timestamp = timestamp or datetime.now()
+        tags = tags or {}
+        symbol = tags.get('symbol')
+        
+        if self.storage_type == "influx" and self.write_api:
+            try:
+                point = Point(measurement).time(timestamp)
+                for k, v in tags.items():
+                    point.tag(k, v)
+                for k, v in fields.items():
+                    point.field(k, v)
+                
+                self.write_api.write(bucket=self.influx_bucket, record=point)
+            except Exception as e:
+                logger.error(f"Failed to write to InfluxDB: {e}")
+                
+        elif self.storage_type == "sqlite":
+            try:
+                conn = sqlite3.connect(self.sqlite_path)
+                cursor = conn.cursor()
+                
+                cursor.execute('''
+                INSERT INTO metrics (timestamp, measurement, symbol, tags_json, fields_json)
+                VALUES (?, ?, ?, ?, ?)
+                ''', (timestamp.isoformat(), measurement, symbol, json.dumps(tags), json.dumps(fields)))
+                
+                conn.commit()
+                conn.close()
+            except Exception as e:
+                logger.error(f"Failed to write to SQLite: {e}")
 
     def _load_metrics(self, filepath: str) -> Dict[str, Any]:
         """Load metrics from JSON file."""
@@ -89,6 +217,22 @@ class MetricsService:
         agent_metrics['models_used'] = list(agent_metrics['models_used'])
 
         self._save_metrics(self.llm_metrics, self.llm_metrics_file)
+        
+        # Also store in Time-Series DB
+        self.store_metric(
+            measurement='llm_usage',
+            fields={
+                'tokens_used': tokens_used,
+                'cost': cost,
+                'duration': duration,
+                'success': int(success)
+            },
+            tags={
+                'agent': agent_name,
+                'model': model,
+                'type': 'llm_call'
+            }
+        )
 
     def record_report_generation(self, report_type: str, success: bool,
                                duration: float, size_bytes: int = 0) -> None:
@@ -134,6 +278,20 @@ class MetricsService:
         }
 
         self._save_metrics(self.report_metrics, self.report_metrics_file)
+        
+        # Also store in Time-Series DB
+        self.store_metric(
+            measurement='report_generation',
+            fields={
+                'duration': duration,
+                'size_bytes': size_bytes,
+                'success': int(success)
+            },
+            tags={
+                'report_type': report_type,
+                'type': 'report_gen'
+            }
+        )
 
     def get_llm_metrics(self, agent_name: Optional[str] = None) -> Dict[str, Any]:
         """

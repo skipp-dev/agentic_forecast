@@ -7,6 +7,7 @@ from dataclasses import dataclass, field, asdict
 import joblib
 import torch
 import time
+from src.utils.mlflow_manager import MLflowManager
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -137,6 +138,7 @@ class ModelZoo:
         self.storage_path = storage_path
         os.makedirs(storage_path, exist_ok=True)
         self.models = {}
+        self.mlflow_manager = MLflowManager()
         
     def get_core_model_families(self) -> List[str]:
         """Return list of supported model families."""
@@ -222,6 +224,29 @@ class ModelZoo:
 
     def _extract_best_params(self, model) -> Dict[str, Any]:
         """Extract best hyperparameters from a trained model."""
+        params = {}
+        
+        # Try to extract from Ray Tune results (common in NeuralForecast Auto models)
+        if hasattr(model, "trials"):
+            try:
+                if hasattr(model.trials, "best_trial"):
+                    best_trial = model.trials.best_trial
+                    if hasattr(best_trial, "config"):
+                        params = best_trial.config
+            except Exception as e:
+                logger.warning(f"Failed to extract params from model.trials: {e}")
+
+        if params:
+            clean_params = {}
+            for k, v in params.items():
+                if isinstance(v, np.ndarray):
+                    clean_params[k] = v.tolist()
+                elif isinstance(v, np.generic):
+                    clean_params[k] = v.item()
+                else:
+                    clean_params[k] = v
+            return clean_params
+
         # Placeholder implementation
         return {'learning_rate': 0.01, 'layers': [64, 64]}
 
@@ -401,6 +426,32 @@ class ModelZoo:
         if config.early_stopping_patience:
              auto_config["early_stop_patience_steps"] = config.early_stopping_patience
 
+        # Determine val_size and prepare data
+        val_size = 0
+        if data_spec.val_df is not None and not data_spec.val_df.empty:
+             # Use provided validation set
+             val_size = len(data_spec.val_df)
+             # Combine train and val for NeuralForecast
+             full_df = pd.concat([data_spec.train_df, data_spec.val_df])
+             # Ensure sorted by date if needed, but _convert might handle it or NF handles it
+             if 'date' in full_df.columns:
+                 full_df = full_df.sort_values('date')
+             elif isinstance(full_df.index, pd.DatetimeIndex):
+                 full_df = full_df.sort_index()
+                 
+             nf_df = self._convert(full_df, data_spec)
+        else:
+             # No validation set provided
+             nf_df = self._convert(train_df, data_spec)
+             # If we have enough data, create a split
+             if len(nf_df) > 2 * horizon:
+                 val_size = horizon
+             else:
+                 # Not enough data for validation split, disable early stopping to avoid error
+                 if "early_stop_patience_steps" in auto_config:
+                     del auto_config["early_stop_patience_steps"]
+                     logger.warning(f"Disabled early stopping for {model_type} due to insufficient data for validation.")
+
         # Initialize model
         model_kwargs = {
             "h": horizon,
@@ -419,7 +470,7 @@ class ModelZoo:
         
         # Train
         nf = NeuralForecast(models=[model], freq=data_spec.freq)
-        nf.fit(df=nf_df)
+        nf.fit(df=nf_df, val_size=val_size)
         
         # Predict
         forecast_df = nf.predict()

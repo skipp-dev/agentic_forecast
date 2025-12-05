@@ -1,7 +1,7 @@
 import pandas as pd
 import numpy as np
 from ..graphs.state import GraphState
-from typing import Dict, List, Union
+from typing import Dict, List, Union, Any
 
 class GuardrailAgent:
     def __init__(self, config: dict = None):
@@ -11,6 +11,14 @@ class GuardrailAgent:
         self.adaptive_threshold_min = self.config.get('adaptive_threshold_min', 3)
         self.adaptive_threshold_max = self.config.get('adaptive_threshold_max', 20)
         self.market_volatility_sensitivity = self.config.get('market_volatility_sensitivity', 1.5)
+        
+        # Hallucination thresholds (e.g., 30% return in one horizon is suspicious for daily/weekly)
+        self.max_return_threshold = self.config.get('max_return_threshold', 0.30) 
+        self.min_return_threshold = self.config.get('min_return_threshold', -0.30)
+        
+        # Portfolio thresholds
+        self.max_single_asset_weight = self.config.get('max_single_asset_weight', 0.25)
+        self.max_leverage = self.config.get('max_leverage', 1.0)
 
     def _extract_symbol(self, action: str) -> str:
         if " for " in action:
@@ -115,6 +123,17 @@ class GuardrailAgent:
         vetted_actions: List[str] = []
         guardrail_entries: List[str] = []
 
+        # Market Status Check
+        market_status = state.get('market_status', {})
+        if market_status and not market_status.get('is_trading_day', True):
+             entry = f"⛔ Guardrail blocked all actions: Not a trading day ({market_status.get('reason', 'unknown')})."
+             guardrail_entries.append(entry)
+             print(entry)
+             return {
+                "recommended_actions": ["Hold (Market Closed)"],
+                "guardrail_log": guardrail_entries
+             }
+
         print(f"Evaluating {len(recommended_actions)} recommended actions with intelligent anomaly assessment...")
 
         # Assess market volatility from data patterns
@@ -122,6 +141,9 @@ class GuardrailAgent:
         
         # Get news shocks
         news_shocks = state.get('news_shocks', {})
+        
+        # Get interpreted forecasts for hallucination check
+        interpreted_forecasts = state.get('interpreted_forecasts', {})
 
         for action in recommended_actions:
             symbol = self._extract_symbol(action)
@@ -141,6 +163,34 @@ class GuardrailAgent:
                 )
                 guardrail_entries.append(entry)
                 continue
+                
+            # Hallucination Check
+            if symbol in interpreted_forecasts:
+                forecast_result = interpreted_forecasts[symbol]
+                # Handle dict or object
+                if isinstance(forecast_result, dict):
+                    horizon_forecasts = forecast_result.get('horizon_forecasts', [])
+                else:
+                    horizon_forecasts = getattr(forecast_result, 'horizon_forecasts', [])
+                
+                is_hallucination = False
+                for hf in horizon_forecasts:
+                    # Handle dict or object
+                    pred_return = hf.get('predicted_return') if isinstance(hf, dict) else getattr(hf, 'predicted_return')
+                    
+                    if pred_return > self.max_return_threshold:
+                        entry = f"Guardrail blocked '{action}' for {symbol}: Hallucination detected (Return {pred_return:.1%} > {self.max_return_threshold:.1%})"
+                        guardrail_entries.append(entry)
+                        is_hallucination = True
+                        break
+                    if pred_return < self.min_return_threshold:
+                        entry = f"Guardrail blocked '{action}' for {symbol}: Hallucination detected (Return {pred_return:.1%} < {self.min_return_threshold:.1%})"
+                        guardrail_entries.append(entry)
+                        is_hallucination = True
+                        break
+                
+                if is_hallucination:
+                    continue
 
             # Enhanced Anomaly Check
             if symbol in anomalies:
@@ -217,3 +267,61 @@ class GuardrailAgent:
             return 'high'
         else:
             return 'medium'
+
+    def validate_portfolio(self, portfolio_allocation: Dict[str, float]) -> Dict[str, Any]:
+        """
+        Validate the final portfolio allocation for dangerous concentrations or leverage.
+        
+        Args:
+            portfolio_allocation: Dictionary of symbol -> weight
+            
+        Returns:
+            Dictionary with 'is_valid' (bool), 'reason' (str), and 'safe_allocation' (Dict)
+        """
+        total_weight = sum(portfolio_allocation.values())
+        
+        # Check leverage
+        if total_weight > self.max_leverage + 0.01: # Tolerance
+            return {
+                'is_valid': False,
+                'reason': f"Leverage {total_weight:.2f} exceeds max {self.max_leverage}",
+                'safe_allocation': self._normalize_weights(portfolio_allocation)
+            }
+            
+        # Check single asset concentration
+        for symbol, weight in portfolio_allocation.items():
+            if symbol == 'CASH': continue
+            if weight > self.max_single_asset_weight:
+                return {
+                    'is_valid': False,
+                    'reason': f"Asset {symbol} weight {weight:.2%} exceeds max {self.max_single_asset_weight:.2%}",
+                    'safe_allocation': self._cap_weights(portfolio_allocation)
+                }
+                
+        return {
+            'is_valid': True,
+            'reason': "Portfolio passed all checks",
+            'safe_allocation': portfolio_allocation
+        }
+
+    def _normalize_weights(self, weights: Dict[str, float]) -> Dict[str, float]:
+        """Normalize weights to sum to max_leverage."""
+        total = sum(weights.values())
+        if total == 0: return weights
+        factor = self.max_leverage / total
+        return {k: v * factor for k, v in weights.items()}
+
+    def _cap_weights(self, weights: Dict[str, float]) -> Dict[str, float]:
+        """Cap individual weights and redistribute to CASH."""
+        new_weights = weights.copy()
+        excess_weight = 0.0
+        
+        for symbol, weight in new_weights.items():
+            if symbol == 'CASH': continue
+            if weight > self.max_single_asset_weight:
+                excess_weight += (weight - self.max_single_asset_weight)
+                new_weights[symbol] = self.max_single_asset_weight
+                
+        # Add excess to CASH
+        new_weights['CASH'] = new_weights.get('CASH', 0.0) + excess_weight
+        return new_weights
