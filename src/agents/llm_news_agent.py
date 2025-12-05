@@ -3,7 +3,7 @@ from dataclasses import dataclass
 import logging
 import pandas as pd
 import json
-from src.utils.llm_utils import extract_json_from_llm_output
+from src.configs.llm_prompts import extract_json_from_response
 
 logger = logging.getLogger(__name__)
 
@@ -66,8 +66,7 @@ class LLMNewsFeatureAgent:
                 else:
                      raw_text = str(response)
 
-                json_str = extract_json_from_llm_output(raw_text)
-                data = json.loads(json_str)
+                data = extract_json_from_response(raw_text)
             except Exception as e:
                 logger.warning(f"LLM enrichment failed: {e}")
                 data = {}

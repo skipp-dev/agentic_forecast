@@ -66,7 +66,7 @@ class LLMStrategyPlannerAgent:
         Generate strategic portfolio recommendations based on backtest performance and market conditions.
         This call is traced to LangSmith.
         """
-        from src.configs.llm_prompts import PROMPTS, build_strategy_planner_user_prompt
+        from src.configs.llm_prompts import PROMPTS, build_strategy_planner_user_prompt, extract_json_from_response
 
         system_prompt = PROMPTS["strategy_planner"]
         # Inject valid strategies into prompt context if possible, or just validate output
@@ -94,8 +94,7 @@ class LLMStrategyPlannerAgent:
         logger.info(f"Raw LLM response (first 500 chars): {raw[:500]}")
 
         try:
-            json_str = extract_json_from_llm_output(raw)
-            data = json.loads(json_str)
+            data = extract_json_from_response(raw)
             logger.info("Successfully parsed LLM response as JSON")
             
             # Validate strategies

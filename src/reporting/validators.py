@@ -110,4 +110,17 @@ def validate_report_consistency(report_html: str, metrics: Dict[str, Any]):
              logger.error(msg)
              raise ReportConsistencyError(msg)
 
+    # --- 6. Code Block / Code Change Check ---
+    # The agent is prohibited from suggesting code changes.
+    # We look for markdown code blocks that might contain Python code.
+    # We allow small inline code for variable names (backticks), but not multi-line blocks with 'def ', 'class ', 'import '.
+    
+    code_block_matches = re.findall(r"```(.*?)```", report_text, re.DOTALL)
+    for block in code_block_matches:
+        block_lower = block.lower()
+        if any(keyword in block_lower for keyword in ["def ", "class ", "import ", "from src", "return "]):
+            msg = "Report contains code blocks with code keywords (def/class/import). This violates 'NO CODE CHANGES' rule."
+            logger.error(msg)
+            raise ReportConsistencyError(msg)
+
     logger.info("Report consistency check passed.")

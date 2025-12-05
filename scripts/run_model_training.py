@@ -17,7 +17,7 @@ import pandas as pd
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from src.graphs.state import GraphState
-from src.nodes.execution_nodes import forecasting_node
+from src.nodes.core_nodes import forecasting_node
 
 def setup_logging(log_level=logging.INFO):
     """Setup logging configuration"""

@@ -2,11 +2,11 @@ from typing import List, Dict, Any, Optional
 from dataclasses import dataclass, field
 import logging
 import json
-from src.utils.llm_utils import extract_json_from_llm_output
 from src.configs.llm_prompts import (
     get_prompt, 
     build_hpo_planner_user_prompt, 
-    build_llm_messages
+    build_llm_messages,
+    extract_json_from_response
 )
 
 logger = logging.getLogger(__name__)
@@ -75,8 +75,7 @@ class LLMHPOPlannerAgent:
         try:
             response = self.llm.generate(messages, temperature=0.2)
             
-            json_str = extract_json_from_llm_output(response)
-            data = json.loads(json_str)
+            data = extract_json_from_response(response)
             
             # Filter and validate keys against the dataclass
             valid_keys = HPOPlan.__annotations__.keys()

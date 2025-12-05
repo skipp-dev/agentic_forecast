@@ -39,7 +39,7 @@ class LLMAnalyticsExplainerAgent:
         Explain metrics using the structured prompt and JSON output schema.
         This call is traced to LangSmith.
         """
-        from src.configs.llm_prompts import PROMPTS, build_analytics_summary_user_prompt
+        from src.configs.llm_prompts import PROMPTS, build_analytics_summary_user_prompt, extract_json_from_response
 
         system_prompt = PROMPTS["analytics_explainer"]
         user_prompt = build_analytics_summary_user_prompt(metrics_payload)
@@ -56,9 +56,9 @@ class LLMAnalyticsExplainerAgent:
         logger.info(f"Raw LLM response (first 500 chars): {raw[:500]}")
 
         try:
-            data = json.loads(raw)
+            data = extract_json_from_response(raw)
             logger.info("Successfully parsed LLM response as JSON")
-        except json.JSONDecodeError as e:
+        except ValueError as e:
             logger.warning(f"LLM returned invalid JSON: {e}. Raw response: {raw}")
             # Fallback: wrap the raw text if model messed up
             data = {

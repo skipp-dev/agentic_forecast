@@ -28,6 +28,7 @@ class NumpyEncoder(json.JSONEncoder):
 
 @dataclass
 class ReportingInput:
+    metrics_overview: Dict[str, Any]
     analytics_summary: Dict[str, Any]
     hpo_plan: Dict[str, Any]
     research_insights: Dict[str, Any]

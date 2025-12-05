@@ -1,0 +1,38 @@
+{
+  "report_id": "report_20251206_001525",
+  "timestamp": "20251206_001525",
+  "executive_summary": "The system performed well with 573 anomalies detected. Average MAPE is 5.2%. No risk events occurred.",
+  "performance_overview": {
+    "global_metrics": "Stable",
+    "symbol_performance": "Mixed",
+    "regime_performance": "Good in bull market",
+    "horizon_analysis": "Short-term accurate"
+  },
+  "risk_assessment": {
+    "current_risks": [
+      "Volatility"
+    ],
+    "guardrail_status": "Healthy",
+    "uncertainty_sources": [
+      "Macro events"
+    ]
+  },
+  "optimization_recommendations": {
+    "hpo_priorities": "None",
+    "model_improvements": "None",
+    "feature_engineering": "None"
+  },
+  "research_insights": {
+    "key_findings": [
+      "None"
+    ],
+    "market_implications": "None",
+    "data_suggestions": "None"
+  },
+  "operational_notes": {
+    "system_health": "Good",
+    "data_quality": "High",
+    "maintenance_needs": "None"
+  },
+  "priority_actions": []
+}

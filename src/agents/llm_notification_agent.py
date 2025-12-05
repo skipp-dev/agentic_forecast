@@ -40,7 +40,7 @@ class LLMNotificationAgent:
         This call is traced to LangSmith.
         """
         # Correct import path for prompts
-        from src.configs.llm_prompts import PROMPTS, build_notification_agent_user_prompt
+        from src.configs.llm_prompts import PROMPTS, build_notification_agent_user_prompt, extract_json_from_response
 
         system_prompt = PROMPTS["notification_agent"]
         user_prompt = build_notification_agent_user_prompt(
@@ -62,10 +62,9 @@ class LLMNotificationAgent:
         logger.info(f"Raw LLM response (first 500 chars): {raw[:500]}")
 
         try:
-            json_str = extract_json_from_llm_output(raw)
-            data = json.loads(json_str)
+            data = extract_json_from_response(raw)
             logger.info("Successfully parsed LLM response as JSON")
-        except json.JSONDecodeError as e:
+        except ValueError as e:
             logger.warning(f"LLM returned invalid JSON: {e}. Raw response: {raw}")
             # Fallback: create basic notification structure matching prompt schema
             data = {

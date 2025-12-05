@@ -1,16 +1,18 @@
 from typing import Dict, Any, Optional, List
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import logging
 import json
 import os
 from datetime import datetime
 from pathlib import Path
 from langsmith import traceable
+from src.reporting.validators import validate_report_consistency, ReportConsistencyError
 
 logger = logging.getLogger(__name__)
 
 @dataclass
 class ReportingInput:
+    metrics_overview: Dict[str, Any]
     analytics_summary: Dict[str, Any]
     hpo_plan: Dict[str, Any]
     research_insights: Dict[str, Any]
@@ -18,14 +20,33 @@ class ReportingInput:
     run_metadata: Dict[str, Any]
 
 @dataclass
+class ReportSection:
+    title: str
+    audience: str   # "quants" | "ops" | "management" | "mixed"
+    body_markdown: str
+
+@dataclass
 class SystemReport:
+    # === New schema (matches current LLM prompt) ===
     executive_summary: str
-    performance_overview: Dict[str, Any]
-    risk_assessment: Dict[str, Any]
-    optimization_recommendations: Dict[str, Any]
-    research_insights: Dict[str, Any]
-    operational_notes: Dict[str, Any]
-    priority_actions: list
+    sections: List[ReportSection] = field(default_factory=list)
+    key_risks: List[str] = field(default_factory=list)
+    key_opportunities: List[str] = field(default_factory=list)
+    actions_for_quants: List[str] = field(default_factory=list)
+    actions_for_ops: List[str] = field(default_factory=list)
+
+    # === Legacy fields (kept for compatibility; usually empty) ===
+    performance_overview: Dict[str, Any] = field(default_factory=dict)
+    risk_assessment: Dict[str, Any] = field(default_factory=dict)
+    optimization_recommendations: Dict[str, Any] = field(default_factory=dict)
+    research_insights: Dict[str, Any] = field(default_factory=dict)
+    operational_notes: Dict[str, Any] = field(default_factory=dict)
+    priority_actions: List[str] = field(default_factory=list)
+
+    def __post_init__(self):
+        # Convert dicts to ReportSection objects if needed
+        if self.sections and isinstance(self.sections[0], dict):
+            self.sections = [ReportSection(**s) for s in self.sections]
 
 class LLMReportingAgent:
     """
@@ -125,6 +146,7 @@ class LLMReportingAgent:
             logger.warning(f"Failed to enhance input with evaluation metrics: {e}")
 
         return ReportingInput(
+            metrics_overview=report_input.metrics_overview,
             analytics_summary=enhanced_analytics,
             hpo_plan=enhanced_hpo,
             research_insights=enhanced_research,
@@ -257,20 +279,26 @@ class LLMReportingAgent:
         Generate a comprehensive system report from aggregated inputs.
         This call is traced to LangSmith.
         """
-        from src.configs.llm_prompts import build_reporting_agent_user_prompt
+        from src.configs.llm_prompts import build_reporting_agent_user_prompt, extract_json_from_response
 
+        system_prompt = None
+        
         # Build user prompt using the factory approach
         if self.factory:
             # Enhance the input with evaluation metrics
             enhanced_input = self._enhance_input_with_evaluation_metrics(report_input)
             user_prompt = build_reporting_agent_user_prompt(
+                metrics_overview=enhanced_input.metrics_overview,
                 analytics_summary=enhanced_input.analytics_summary,
                 hpo_plan=enhanced_input.hpo_plan,
                 research_insights=enhanced_input.research_insights,
                 guardrail_status=enhanced_input.guardrail_status,
                 run_metadata=enhanced_input.run_metadata
             )
-            messages = self.factory.build_agent_messages('reporting_agent', user_prompt)
+            # messages = self.factory.build_agent_messages('reporting_agent', user_prompt)
+            # Fallback to getting system prompt directly if factory doesn't provide it easily for .complete()
+            from src.configs.llm_prompts import PROMPTS
+            system_prompt = PROMPTS.get("reporting_agent")
         else:
             # Fallback to direct prompt building
             from src.configs.llm_prompts import PROMPTS
@@ -278,6 +306,7 @@ class LLMReportingAgent:
             # Enhance the input with evaluation metrics
             enhanced_input = self._enhance_input_with_evaluation_metrics(report_input)
             user_prompt = build_reporting_agent_user_prompt(
+                metrics_overview=enhanced_input.metrics_overview,
                 analytics_summary=enhanced_input.analytics_summary,
                 hpo_plan=enhanced_input.hpo_plan,
                 research_insights=enhanced_input.research_insights,
@@ -293,7 +322,7 @@ class LLMReportingAgent:
         try:
             raw = self.llm.complete(
                 prompt=user_prompt,
-                system=system_prompt if 'system_prompt' not in locals() else system_prompt,
+                system=system_prompt,
                 temperature=0.2,
                 max_tokens=2000,
             )
@@ -307,9 +336,9 @@ class LLMReportingAgent:
             raise
 
         try:
-            data = json.loads(raw)
+            data = extract_json_from_response(raw)
             logger.info("Successfully parsed LLM response as JSON")
-        except json.JSONDecodeError as e:
+        except ValueError as e:
             logger.warning(f"LLM returned invalid JSON: {e}. Raw response: {raw}")
             # Fallback: wrap the raw text if model messed up
             data = {
@@ -365,8 +394,26 @@ class LLMReportingAgent:
         # Generate and store Markdown
         markdown_path = self._store_markdown_report(report, report_id, timestamp)
 
-        # Generate and store HTML
-        html_path = self._store_html_report(report, report_id, timestamp)
+        # Generate HTML content
+        html_content = self.generate_html_report(report, timestamp)
+
+        # Validate Report
+        validation_status = "passed"
+        try:
+            validate_report_consistency(html_content, report_input.metrics_overview)
+            logger.info("Report validation passed.")
+        except ReportConsistencyError as e:
+            logger.error(f"Report validation FAILED: {e}")
+            validation_status = "failed"
+            # Inject warning into HTML
+            warning_banner = f"<div style='background: #ffcccc; color: #cc0000; padding: 10px; border: 1px solid red; margin-bottom: 20px;'><strong>WARNING: REPORT VALIDATION FAILED</strong><br>{e}</div>"
+            html_content = html_content.replace("<body>", f"<body>\n{warning_banner}")
+
+        # Store HTML
+        html_path = self.reports_dir / f"{report_id}.html"
+        with open(html_path, 'w') as f:
+            f.write(html_content)
+        logger.info(f"Stored HTML report at {html_path}")
 
         # Send email if enabled
         if self.email_enabled and self.email_recipients:
@@ -382,6 +429,7 @@ class LLMReportingAgent:
             'json_path': str(json_path),
             'markdown_path': str(markdown_path),
             'html_path': str(html_path),
+            'validation_status': validation_status,
             'email_sent': self.email_enabled and bool(self.email_recipients),
             'dashboard_updated': self.dashboard_enabled
         }
@@ -520,24 +568,27 @@ class LLMReportingAgent:
         """Record Prometheus metrics for LLM call start."""
         try:
             from src.services.metrics_service import MetricsService
-            MetricsService.record_llm_call_start('reporting_agent')
-        except ImportError:
-            pass  # Metrics service not available
+            if hasattr(MetricsService, 'record_llm_call_start'):
+                MetricsService.record_llm_call_start('reporting_agent')
+        except Exception:
+            pass  # Metrics service not available or method missing
 
     def _record_llm_call_success(self):
         """Record Prometheus metrics for successful LLM call."""
         try:
             from src.services.metrics_service import MetricsService
-            MetricsService.record_llm_call_success('reporting_agent', tokens_input=0, tokens_output=0)
-        except ImportError:
+            if hasattr(MetricsService, 'record_llm_call_success'):
+                MetricsService.record_llm_call_success('reporting_agent', tokens_input=0, tokens_output=0)
+        except Exception:
             pass
 
     def _record_llm_call_error(self):
         """Record Prometheus metrics for failed LLM call."""
         try:
             from src.services.metrics_service import MetricsService
-            MetricsService.record_llm_call_error('reporting_agent')
-        except ImportError:
+            if hasattr(MetricsService, 'record_llm_call_error'):
+                MetricsService.record_llm_call_error('reporting_agent')
+        except Exception:
             pass
 
     def generate_markdown_report(self, report: SystemReport, timestamp: Optional[str] = None) -> str:

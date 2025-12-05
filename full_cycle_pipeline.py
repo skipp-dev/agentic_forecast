@@ -14,7 +14,7 @@ sys.path.append(os.path.join(os.path.dirname(__file__), 'src'))
 
 from src.data.unified_ingestion_v2 import UnifiedDataIngestion
 from src.agents.feature_agent import FeatureAgent
-from src.nodes.execution_nodes import forecasting_node
+from src.nodes.core_nodes import forecasting_node
 from src.nodes.agent_nodes import analytics_agent_node
 from src.graphs.state import GraphState
 

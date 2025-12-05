@@ -11,7 +11,7 @@ project_root = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, project_root)
 
 from src.core.state import PipelineGraphState
-from src.nodes.execution_nodes import (
+from src.nodes.core_nodes import (
     data_ingestion_node,
     feature_engineering_node,
     forecasting_node
