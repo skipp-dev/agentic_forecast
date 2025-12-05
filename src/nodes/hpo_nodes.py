@@ -32,9 +32,11 @@ def hpo_node(state: GraphState) -> GraphState:
         if run_type == 'WEEKEND_HPO':
             model_families = hpo_agent.model_families # All supported families
         else:
-            # Add NLinear for daily if not already there
+            # Add NLinear and AutoDLinear for daily if not already there
             if 'NLinear' in hpo_agent.model_families:
                 model_families.append('NLinear')
+            if 'AutoDLinear' in hpo_agent.model_families:
+                model_families.append('AutoDLinear')
 
         for symbol in symbols:
             logger.info(f"Running HPO for {symbol}...")
