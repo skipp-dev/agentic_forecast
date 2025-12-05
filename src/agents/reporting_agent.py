@@ -852,6 +852,8 @@ class LLMReportingAgent:
         2. If 'anomalies_detected' is 0, you MUST say "No anomalies detected".
         3. If 'total_trials' is 0, state clearly that no HPO trials were run.
         4. Your output MUST be consistent with the provided JSON metrics.
+        5. VERIFICATION: Every number in your report MUST be traceable to the input JSON.
+        6. NO CODE CHANGES: You have NO authority to suggest code changes.
         """
 
         # Enhance the input with evaluation metrics
