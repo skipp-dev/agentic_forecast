@@ -1,0 +1,272 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>System Forecasting Report – report_20251205_192508</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background: white;
+            padding: 30px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #2c3e50;
+            border-bottom: 3px solid #3498db;
+            padding-bottom: 10px;
+            margin-top: 0;
+        }
+        h2 {
+            color: #34495e;
+            margin-top: 30px;
+            border-left: 4px solid #3498db;
+            padding-left: 15px;
+        }
+        h3 {
+            color: #34495e;
+            margin-top: 10px;
+            margin-bottom: 5px;
+        }
+        .timestamp {
+            color: #6c757d;
+            font-size: 0.9em;
+        }
+        .run-type-badge {
+            display: inline-block;
+            background: #3498db;
+            color: white;
+            padding: 4px 10px;
+            border-radius: 999px;
+            font-size: 0.8em;
+            margin-left: 10px;
+        }
+        .executive-summary {
+            background: #ecf0f1;
+            padding: 20px;
+            border-radius: 5px;
+            margin: 20px 0;
+        }
+        .metrics-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+            gap: 10px;
+            margin-top: 10px;
+        }
+        .metric-card {
+            background: #ffffff;
+            border: 1px solid #ddd;
+            padding: 10px 12px;
+            border-radius: 5px;
+        }
+        .metric-label {
+            font-size: 0.85em;
+            color: #6c757d;
+        }
+        .metric-value {
+            font-size: 1.1em;
+            font-weight: 600;
+            margin-top: 2px;
+        }
+        .section-box {
+            background: #fff;
+            border: 1px solid #ddd;
+            padding: 15px;
+            margin: 10px 0;
+            border-radius: 5px;
+        }
+        .section-body {
+            margin-top: 10px;
+        }
+        .section-body ul {
+            margin-top: 5px;
+            margin-bottom: 5px;
+        }
+        .section-body li {
+            margin-bottom: 3px;
+        }
+        .audience-tag {
+            color: #6c757d;
+            font-size: 0.9em;
+        }
+        .risk-item {
+            background: #fff3cd;
+            padding: 10px;
+            margin: 5px 0;
+            border-radius: 3px;
+            border-left: 4px solid #ffc107;
+        }
+        .opp-item {
+            background: #d4edda;
+            padding: 10px;
+            margin: 5px 0;
+            border-radius: 3px;
+            border-left: 4px solid #28a745;
+        }
+        .action-item {
+            background: #d1ecf1;
+            padding: 10px;
+            margin: 5px 0;
+            border-radius: 3px;
+            border-left: 4px solid #17a2b8;
+        }
+        .risk-event {
+            background: #f8d7da;
+            padding: 10px;
+            margin: 5px 0;
+            border-radius: 3px;
+            border-left: 4px solid #dc3545;
+        }
+        .muted {
+            color: #6c757d;
+            font-size: 0.9em;
+        }
+        .guardrail-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 10px;
+        }
+        .guardrail-table th,
+        .guardrail-table td {
+            border: 1px solid #ddd;
+            padding: 6px 8px;
+            text-align: left;
+        }
+        .guardrail-table th {
+            background: #f1f3f5;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>
+            System Forecasting Report
+            <span class="run-type-badge">BACKTEST</span>
+        </h1>
+        <p class="timestamp">
+            Report ID: report_20251205_192508 · Generated: 20251205_192508
+        </p>
+
+        <h2>Executive Summary</h2>
+        <div class="executive-summary">
+            <p>The latest backtest run processed 1972 symbols, with an average MAPE of approximately 3.89% and a median MAPE of about 2.68%. No anomalies were detected, and the guardrails are currently inactive, indicating no system issues. Importantly, there were no risk events during this run, confirming that all business rules functioned as expected. The system is safe to proceed with further evaluations and optimizations.</p>
+        </div>
+
+        <h2>Metrics Overview</h2>
+        <div class="metrics-grid">
+            <div class="metric-card">
+                <div class="metric-label">Total Symbols</div>
+                <div class="metric-value">1972</div>
+            </div>
+            <div class="metric-card">
+                <div class="metric-label">Models Trained</div>
+                <div class="metric-value">1972</div>
+            </div>
+            <div class="metric-card">
+                <div class="metric-label">Models Promoted</div>
+                <div class="metric-value">0</div>
+            </div>
+            <div class="metric-card">
+                <div class="metric-label">Avg MAPE</div>
+                <div class="metric-value">3.89%</div>
+            </div>
+            <div class="metric-card">
+                <div class="metric-label">Median MAPE</div>
+                <div class="metric-value">2.68%</div>
+            </div>
+            <div class="metric-card">
+                <div class="metric-label">Anomalies Detected</div>
+                <div class="metric-value">0</div>
+            </div>
+        </div>
+
+        <h2>Guardrails & Health</h2>
+        <table class="guardrail-table">
+            <tr>
+                <th>Total Checks</th>
+                <th>Passed</th>
+                <th>Warnings</th>
+                <th>Critical</th>
+            </tr>
+            <tr>
+                <td>0</td>
+                <td>0</td>
+                <td>0</td>
+                <td>0</td>
+            </tr>
+        </table>
+
+        <h2>Risk Events</h2>
+        
+        <p class="muted">No risk events recorded for this run.</p>
+    
+
+        <h2>Detailed Sections</h2>
+        
+        <div class="section-box">
+            <h3>Performance Overview</h3>
+            <p class="audience-tag"><em>Audience: quants</em></p>
+            <div class="section-body">
+                <ul>
+<li>Total symbols processed: 1972</li>
+<li>Models trained: 1972</li>
+<li>Average MAPE: 3.89%</li>
+<li>Median MAPE: 2.68%</li>
+<li>Best performing symbol: ANNX_daily</li>
+<li>Worst performing symbol: TDIC_daily</li>
+</ul>
+<p>The model comparison shows that BaselineLinear has dominated the leaderboard with 986 wins against challengers, which did not secure any wins.</p>
+            </div>
+        </div>
+        
+
+        <div class="section-box">
+            <h3>Guardrail and Risk Assessment</h3>
+            <p class="audience-tag"><em>Audience: ops</em></p>
+            <div class="section-body">
+                <ul>
+<li>Guardrail status: Inactive</li>
+<li>Total checks: 0 (no checks executed)</li>
+<li>Risk events: None detected</li>
+</ul>
+<p>With guardrails inactive, there were no system checks performed, and thus no potential issues were identified. The absence of risk events indicates that all business rules were adhered to without triggering any alerts.</p>
+            </div>
+        </div>
+        
+
+        <div class="section-box">
+            <h3>Research Insights</h3>
+            <p class="audience-tag"><em>Audience: management</em></p>
+            <div class="section-body">
+                <ul>
+<li>Strong directional accuracy observed across several symbols, including AAL_daily and AAPL_daily, both achieving 100% accuracy.</li>
+<li>No anomalies detected, suggesting stable performance across the evaluated models.</li>
+</ul>
+            </div>
+        </div>
+        
+
+        <h2>Key Risks</h2>
+        <div class="risk-item">Inactive guardrails may pose a risk if future runs encounter unexpected data quality issues.</div>
+<div class="risk-item">No HPO trials were conducted, limiting optimization opportunities.</div>
+
+        <h2>Key Opportunities</h2>
+        <div class="opp-item">Consider activating guardrails to ensure system integrity in future runs.</div>
+<div class="opp-item">Explore HPO trials to optimize model performance further.</div>
+
+        <h2>Actions for Quants</h2>
+        <div class="action-item">Investigate the performance of models, particularly focusing on the worst-performing symbols to identify improvement areas.</div>
+
+        <h2>Actions for Ops</h2>
+        <div class="action-item">Activate guardrails for the next run to monitor system integrity and data quality.</div>
+    </div>
+</body>
+</html>

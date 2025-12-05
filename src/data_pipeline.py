@@ -27,6 +27,7 @@ from src.models.lstm_forecaster import LSTMForecaster
 from src.ensemble_methods import EnsembleForecaster
 
 from src.drift_detection import DriftDetector
+from src.services.database_service import DatabaseService
 
 logger = logging.getLogger(__name__)
 
@@ -43,6 +44,7 @@ class DataPipeline:
             alpha_vantage_key: API key for Alpha Vantage
         """
         self.av_client = AlphaVantageClient(alpha_vantage_key)
+        self.db_service = DatabaseService()
         self.scaler_X = RobustScaler()
         self.scaler_y = RobustScaler()
         self.feature_columns = None
@@ -107,16 +109,23 @@ class DataPipeline:
         combined_data = combined_data.fillna(0)
 
         logger.info(f"Fetched {len(combined_data)} data points with {len(combined_data.columns)} features")
+        
+        # Save to DB
+        try:
+            self.db_service.save_market_data(symbol, combined_data)
+        except Exception as e:
+            logger.warning(f"Failed to save data to DB: {e}")
+            
         return combined_data
 
-    def prepare_ml_data(self, data: pd.DataFrame, target_column: str = 'close',
+    def prepare_ml_data(self, data: pd.DataFrame, target_column: str = 'log_returns',
                        sequence_length: int = 60, test_size: float = 0.2) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
         """
         Prepare data for ML model training.
 
         Args:
             data: Raw data DataFrame
-            target_column: Column to predict
+            target_column: Column to predict (default: 'log_returns')
             sequence_length: Length of input sequences
             test_size: Proportion of data for testing
 
@@ -125,6 +134,15 @@ class DataPipeline:
         """
         if data.empty:
             raise ValueError("No data provided")
+
+        # Ensure target column exists
+        if target_column not in data.columns:
+            if target_column == 'log_returns' and 'close' in data.columns:
+                logger.info("Calculating log_returns on the fly")
+                data['log_returns'] = np.log(data['close'] / data['close'].shift(1))
+                data = data.dropna()
+            else:
+                raise ValueError(f"Target column {target_column} not found in data")
 
         # Select features (exclude target from features if predicting price)
         if target_column in data.columns:
@@ -137,27 +155,32 @@ class DataPipeline:
         X = data[feature_cols].values
         y = data[target_column].values.reshape(-1, 1)
 
-        # Scale data
-        X_scaled = self.scaler_X.fit_transform(X)
-        y_scaled = self.scaler_y.fit_transform(y)
+        # Split into train/test BEFORE scaling to prevent leakage
+        split_idx = int(len(X) * (1 - test_size))
+        
+        X_train_raw = X[:split_idx]
+        X_test_raw = X[split_idx:]
+        y_train_raw = y[:split_idx]
+        y_test_raw = y[split_idx:]
+
+        # Scale data (Fit on Train, Transform on Test)
+        X_train_scaled = self.scaler_X.fit_transform(X_train_raw)
+        y_train_scaled = self.scaler_y.fit_transform(y_train_raw)
+        
+        X_test_scaled = self.scaler_X.transform(X_test_raw)
+        y_test_scaled = self.scaler_y.transform(y_test_raw)
 
         # Create sequences for time series models
-        X_seq = []
-        y_seq = []
+        def create_sequences(X_data, y_data, seq_len):
+            X_seq = []
+            y_seq = []
+            for i in range(seq_len, len(X_data)):
+                X_seq.append(X_data[i-seq_len:i])
+                y_seq.append(y_data[i])
+            return np.array(X_seq), np.array(y_seq)
 
-        for i in range(sequence_length, len(X_scaled)):
-            X_seq.append(X_scaled[i-sequence_length:i])
-            y_seq.append(y_scaled[i])
-
-        X_seq = np.array(X_seq)
-        y_seq = np.array(y_seq)
-
-        # Split into train/test
-        split_idx = int(len(X_seq) * (1 - test_size))
-        X_train = X_seq[:split_idx]
-        X_test = X_seq[split_idx:]
-        y_train = y_seq[:split_idx]
-        y_test = y_seq[split_idx:]
+        X_train, y_train = create_sequences(X_train_scaled, y_train_scaled, sequence_length)
+        X_test, y_test = create_sequences(X_test_scaled, y_test_scaled, sequence_length)
 
         logger.info(f"Prepared ML data: {X_train.shape[0]} train, {X_test.shape[0]} test sequences")
         return X_train, X_test, y_train, y_test

@@ -66,7 +66,7 @@ def extract_analytics_summary(state: PipelineGraphState) -> Dict[str, Any]:
     volatilities = []
     
     for symbol, metrics in analytics_results.items():
-        if 'mape' in metrics:
+        if 'mape' in metrics and metrics['mape'] is not None:
             mapes.append(metrics['mape'])
         if 'volatility' in metrics:
             volatilities.append(metrics['volatility'])
@@ -77,7 +77,7 @@ def extract_analytics_summary(state: PipelineGraphState) -> Dict[str, Any]:
     # Identify top performers (lowest MAPE)
     perf_list = []
     for symbol, metrics in analytics_results.items():
-        if 'mape' in metrics:
+        if 'mape' in metrics and metrics['mape'] is not None:
             perf_list.append({'symbol': symbol, 'mape': metrics['mape']})
     
     perf_list.sort(key=lambda x: x['mape'])

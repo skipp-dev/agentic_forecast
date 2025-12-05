@@ -2,6 +2,8 @@ from typing import Dict, Any, List, Optional
 from dataclasses import dataclass, field
 import logging
 import json
+import yaml
+import os
 from langsmith import traceable
 from src.utils.llm_utils import extract_json_from_llm_output
 
@@ -37,6 +39,22 @@ class LLMStrategyPlannerAgent:
             from src.llm.llm_factory import create_strategy_planner_llm
             self.llm = create_strategy_planner_llm()
         self.settings = settings or {}
+        self.strategy_config = self._load_strategy_config()
+
+    def _load_strategy_config(self) -> Dict[str, Any]:
+        """Load valid strategies from config."""
+        config_path = os.path.join("config", "strategies.yaml")
+        try:
+            if os.path.exists(config_path):
+                with open(config_path, "r") as f:
+                    config = yaml.safe_load(f)
+                    return config.get("strategies", {})
+            else:
+                logger.warning(f"Strategy config not found at {config_path}")
+                return {}
+        except Exception as e:
+            logger.error(f"Failed to load strategy config: {e}")
+            return {}
 
     @traceable(
         name="strategy_planner_generate_plan",
@@ -51,12 +69,18 @@ class LLMStrategyPlannerAgent:
         from src.configs.llm_prompts import PROMPTS, build_strategy_planner_user_prompt
 
         system_prompt = PROMPTS["strategy_planner"]
+        # Inject valid strategies into prompt context if possible, or just validate output
+        valid_strategy_names = list(self.strategy_config.keys())
+        
         user_prompt = build_strategy_planner_user_prompt(
             strategy_backtests=planning_input.strategy_backtests,
             current_regime=planning_input.current_regime,
             risk_constraints=planning_input.risk_constraints,
             portfolio_requirements=planning_input.portfolio_requirements
         )
+        
+        if valid_strategy_names:
+            user_prompt += f"\n\nIMPORTANT: You must ONLY recommend strategies from this allowed list: {', '.join(valid_strategy_names)}."
 
         logger.info("Calling LLM for strategy planning (LangSmith tracing enabled)")
 
@@ -73,13 +97,35 @@ class LLMStrategyPlannerAgent:
             json_str = extract_json_from_llm_output(raw)
             data = json.loads(json_str)
             logger.info("Successfully parsed LLM response as JSON")
+            
+            # Validate strategies
+            if self.strategy_config:
+                validated_rankings = []
+                for strat in data.get("strategy_rankings", []):
+                    name = strat.get("strategy_name")
+                    if name in self.strategy_config:
+                        validated_rankings.append(strat)
+                    else:
+                        logger.warning(f"LLM suggested invalid strategy '{name}'. Dropping.")
+                
+                if not validated_rankings:
+                    logger.warning("No valid strategies returned. Falling back to default_balanced.")
+                    validated_rankings.append({
+                        "strategy_name": "default_balanced",
+                        "overall_rank": 1,
+                        "allocation_recommendation": 1.0,
+                        "rationale": "Fallback due to invalid LLM output"
+                    })
+                
+                data["strategy_rankings"] = validated_rankings
+
         except json.JSONDecodeError as e:
             logger.warning(f"LLM returned invalid JSON: {e}. Raw response: {raw}")
             # Fallback: create basic strategy plan structure matching prompt schema
             data = {
                 "strategy_rankings": [
                     {
-                        "strategy_name": "Default Strategy",
+                        "strategy_name": "default_balanced",
                         "overall_rank": 1,
                         "performance_score": 0.5,
                         "risk_score": 0.5,
@@ -96,7 +142,7 @@ class LLMStrategyPlannerAgent:
                 ],
                 "portfolio_recommendations": {
                     "suggested_allocation": {
-                        "Default Strategy": 1.0
+                        "default_balanced": 1.0
                     },
                     "rationale": "Fallback allocation due to parsing error",
                     "expected_performance": {

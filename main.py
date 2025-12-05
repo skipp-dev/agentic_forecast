@@ -42,6 +42,7 @@ from src.nodes.retraining_nodes import retraining_node
 from src.nodes.reporting_nodes import generate_report_node
 from src.nodes.strategy_nodes import strategy_node
 from src.nodes.portfolio_nodes import portfolio_construction_node
+from src.nodes.trade_execution_nodes import trade_execution_node
 from src.agents.orchestrator_agent import OrchestratorAgent
 
 # Set up logging
@@ -272,6 +273,7 @@ def main():
         workflow.add_node("analytics", analytics_node)
         workflow.add_node("strategy", strategy_node)
         workflow.add_node("portfolio_construction", portfolio_construction_node)
+        workflow.add_node("trade_execution", trade_execution_node)
         workflow.add_node("monitoring", monitoring_node)
         workflow.add_node("retraining", retraining_node)
         workflow.add_node("reporting", generate_report_node)
@@ -306,7 +308,8 @@ def main():
         )
         
         workflow.add_edge("strategy", "portfolio_construction")
-        workflow.add_edge("portfolio_construction", "monitoring")
+        workflow.add_edge("portfolio_construction", "trade_execution")
+        workflow.add_edge("trade_execution", "monitoring")
         workflow.add_edge("monitoring", "retraining")
         workflow.add_edge("retraining", "reporting")
         workflow.add_edge("reporting", END)

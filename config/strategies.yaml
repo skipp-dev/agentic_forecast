@@ -1,0 +1,27 @@
+strategies:
+  momentum_growth:
+    description: "Aggressive growth strategy focusing on high-momentum stocks."
+    risk_profile: "high"
+    lookback_window: 20
+    min_volatility: 0.02
+    
+  mean_reversion_defensive:
+    description: "Defensive strategy betting on price reversion to mean."
+    risk_profile: "low"
+    lookback_window: 60
+    max_drawdown_limit: 0.05
+
+  ai_basket:
+    description: "Thematic strategy focused on AI and Tech sector."
+    risk_profile: "medium"
+    sector_focus: ["Technology", "Semiconductors"]
+
+  energy_oil:
+    description: "Sector-specific strategy for Energy and Oil."
+    risk_profile: "medium"
+    sector_focus: ["Energy"]
+
+  default_balanced:
+    description: "Balanced portfolio with equal weights."
+    risk_profile: "medium"
+    fallback: true

@@ -31,3 +31,4 @@ fastapi>=0.104.0
 uvicorn[standard]>=0.24.0
 yfinance>=0.2.0
 mlflow>=2.8.0
+filelock>=3.13.0

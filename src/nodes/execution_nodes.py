@@ -20,6 +20,7 @@ from src.services.inference_service import InferenceService
 from src.services.model_registry_service import ModelRegistryService
 from src.alpha_vantage_client import AlphaVantageClient
 from src.agents.feature_engineer_agent import FeatureEngineerAgent
+from src.services.database_service import DatabaseService
 
 logger = logging.getLogger(__name__)
 
@@ -45,6 +46,20 @@ def data_ingestion_node(state: PipelineGraphState) -> PipelineGraphState:
             logger.info(f"Fetching data for {symbol}...")
             # Use full outputsize for production
             df = client.get_daily_data(symbol, outputsize='full')
+            
+            # Apply Backtest Cutoff if present
+            cutoff_date = state.get('cutoff_date')
+            if cutoff_date and df is not None and not df.empty:
+                # Ensure index is datetime
+                if not isinstance(df.index, pd.DatetimeIndex):
+                    df.index = pd.to_datetime(df.index)
+                
+                # Filter data up to cutoff (inclusive)
+                # We assume cutoff_date is the "current date" of the simulation.
+                # The model should only see data up to this date.
+                df = df[df.index <= pd.Timestamp(cutoff_date)]
+                logger.info(f"Filtered data for {symbol} up to {cutoff_date}. Rows: {len(df)}")
+
             if df is not None and not df.empty:
                 data_map[symbol] = df
                 logger.info(f"Fetched {len(df)} rows for {symbol}")
@@ -128,6 +143,7 @@ def forecasting_node(state: PipelineGraphState) -> PipelineGraphState:
     training_service = GPUTrainingService()
     inference_service = InferenceService()
     model_registry = ModelRegistryService()
+    db_service = DatabaseService()
 
     for symbol in symbols:
         try:
@@ -296,6 +312,14 @@ def forecasting_node(state: PipelineGraphState) -> PipelineGraphState:
                     ds_future = pd.date_range(start=data.index.max() + pd.Timedelta(days=1), periods=horizon, freq='D')
                     forecast_df = pd.DataFrame({'ds': ds_future, family: pred_future})
                     symbol_forecasts[family] = forecast_df
+                    
+                    # Save to DB
+                    try:
+                        first_date = ds_future[0].strftime('%Y-%m-%d')
+                        first_val = float(pred_future[0])
+                        db_service.save_forecast(symbol, family, first_date, first_val, horizon)
+                    except Exception as e:
+                        logger.error(f"Failed to save forecast to DB: {e}")
                     
             forecasts[symbol] = symbol_forecasts
             logger.info(f"Generated forecast for {symbol}.")

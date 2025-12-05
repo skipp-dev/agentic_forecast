@@ -6,6 +6,7 @@ import time
 from datetime import datetime, timedelta
 from ..graphs.state import GraphState
 from ..alpha_vantage_client import AlphaVantageClient
+from ..agents.liquidity_agent import LiquidityAgent
 
 logger = logging.getLogger(__name__)
 
@@ -19,6 +20,10 @@ def _load_data_sync(state: GraphState) -> GraphState:
     symbols = state['symbols']
     config = state.get('config', {})
     raw_data = {}
+    
+    # Initialize Liquidity Agent
+    liquidity_agent = LiquidityAgent(config=config.get('liquidity', {}))
+    rejected_symbols = []
 
     # PRODUCTION RULE: Alpha Vantage only - no synthetic fallback for production runs
     try:
@@ -98,6 +103,20 @@ def _load_data_sync(state: GraphState) -> GraphState:
                 data = data[(data.index >= start_date) & (data.index <= end_date)]
                 # Ensure index is datetime for merging
                 data.index = pd.to_datetime(data.index)
+                
+                # --- LIQUIDITY CHECK ---
+                # Calculate metrics and check tradeability
+                lq_metrics = liquidity_agent.calculate_metrics(data)
+                tradeability = liquidity_agent.check_tradeability(symbol, lq_metrics)
+                
+                if not tradeability['tradeable']:
+                    logger.warning(f"Symbol {symbol} rejected by LiquidityAgent: {tradeability['reasons']}")
+                    rejected_symbols.append({'symbol': symbol, 'reasons': tradeability['reasons']})
+                    # Skip adding to raw_data
+                    continue
+                else:
+                    logger.info(f"Symbol {symbol} passed liquidity check.")
+                # -----------------------
                 
                 if _validate_data_structure(data):
                     prices_dict[symbol] = data
