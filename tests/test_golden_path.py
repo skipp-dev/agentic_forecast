@@ -25,7 +25,14 @@ class TestGoldenPath(unittest.TestCase):
     @patch('src.nodes.reporting_nodes.generate_report_node')
     @patch('src.nodes.agent_nodes.forecast_agent_node')
     @patch('src.nodes.data_nodes_optimized.load_data_node')
-    def test_pipeline_integration(self, mock_load_data, mock_forecast_agent, mock_reporting):
+    @patch('src.nodes.agent_nodes.market_calendar_node')
+    def test_pipeline_integration(self, mock_market_calendar, mock_load_data, mock_forecast_agent, mock_reporting):
+        # Setup mock market calendar
+        def market_calendar_side_effect(state):
+            state['market_status'] = {'is_trading_day': True}
+            return state
+        mock_market_calendar.side_effect = market_calendar_side_effect
+
         # Setup mock data loader
         def load_data_side_effect(state):
             state['raw_data'] = {'AAPL': self.golden_df}

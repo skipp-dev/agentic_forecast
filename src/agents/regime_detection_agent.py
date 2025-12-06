@@ -63,6 +63,8 @@ class RegimeDetectionAgent:
     def detect_regimes(self, macro_features: pd.DataFrame, cutoff_date: Optional[Union[str, pd.Timestamp]] = None) -> Dict[str, pd.Series]:
         """
         Detect market regimes from macro features.
+        Uses K-Means clustering for dynamic regime detection if enough history is available.
+        Falls back to rule-based detection if data is insufficient.
 
         Args:
             macro_features: DataFrame with macro economic features
@@ -78,6 +80,83 @@ class RegimeDetectionAgent:
             return {}
 
         # Enforce point-in-time correctness
+        if cutoff_date:
+            macro_features = TimeMachine.travel_to(macro_features, cutoff_date)
+
+        regimes = {}
+        
+        # 1. Dynamic Clustering (K-Means)
+        # We need enough history to train the clusterer (e.g., 60 months)
+        min_history = 60
+        if len(macro_features) >= min_history:
+            try:
+                regimes['dynamic_regime'] = self._detect_dynamic_regime(macro_features)
+            except Exception as e:
+                logger.warning(f"Dynamic regime detection failed: {e}")
+                regimes['dynamic_regime'] = pd.Series("unknown", index=macro_features.index)
+        else:
+            regimes['dynamic_regime'] = pd.Series("insufficient_data", index=macro_features.index)
+
+        # 2. Rule-based Fallback (Legacy)
+        for regime_type, definitions in self.regime_definitions.items():
+            regime_series = pd.Series(index=macro_features.index, dtype='object')
+            
+            for idx, row in macro_features.iterrows():
+                current_regime = "unknown"
+                for name, condition in definitions.items():
+                    try:
+                        # Create a mini-series/dict for the lambda to work on
+                        # The lambdas expect a row-like object
+                        if condition(row):
+                            current_regime = name
+                            break
+                    except Exception:
+                        continue
+                regime_series[idx] = current_regime
+            
+            regimes[regime_type] = regime_series
+
+        return regimes
+
+    def _detect_dynamic_regime(self, data: pd.DataFrame) -> pd.Series:
+        """
+        Uses K-Means to cluster market conditions into regimes (e.g., 0, 1, 2, 3).
+        Features: Fed Funds Change, Payrolls Change, Oil Returns, VIX (if available).
+        """
+        # Select features
+        features = ['fed_funds_change_3m', 'payrolls_change_3m', 'oil_returns_1m']
+        # Add VIX if available
+        if 'vix_close' in data.columns:
+            features.append('vix_close')
+            
+        # Filter for available columns
+        available_features = [f for f in features if f in data.columns]
+        
+        if not available_features:
+            return pd.Series("unknown", index=data.index)
+            
+        X = data[available_features].dropna()
+        
+        if len(X) < 30:
+            return pd.Series("insufficient_data", index=data.index)
+            
+        # Scale features
+        scaler = StandardScaler()
+        X_scaled = scaler.fit_transform(X)
+        
+        # Cluster into 4 regimes (e.g., Goldilocks, Reflation, Stagflation, Deflation)
+        kmeans = KMeans(n_clusters=4, random_state=42, n_init=10)
+        kmeans.fit(X_scaled)
+        
+        # Predict regimes for all points
+        cluster_ids = kmeans.predict(X_scaled)
+        
+        # Map cluster IDs to strings
+        regime_labels = [f"cluster_{cid}" for cid in cluster_ids]
+        
+        # Realign with original index (handling dropna)
+        result = pd.Series(regime_labels, index=X.index)
+        return result.reindex(data.index, fill_value="unknown")
         if cutoff_date:
             tm = TimeMachine(macro_features)
             # We don't need lookback_days here because we want all history up to cutoff
@@ -127,25 +206,25 @@ class RegimeDetectionAgent:
 
         return regime_labels
 
-    def detect_clustered_regimes(self, macro_features: pd.DataFrame, n_clusters: int = 4, cutoff_date: Optional[Union[str, pd.Timestamp]] = None) -> pd.Series:
+    def detect_clustered_regimes(self, macro_features: pd.DataFrame, n_clusters: int = 4, 
+                               cutoff_date: Optional[Union[str, pd.Timestamp]] = None,
+                               window_size: int = 252, step_size: int = 20) -> pd.Series:
         """
         Use unsupervised clustering to detect market regimes.
         
-        WARNING: This method fits on the provided dataset. If used for historical backtesting,
-        it must be used in a rolling/expanding window fashion to avoid look-ahead bias.
-        Currently, it enforces a cutoff_date if provided, but fitting on the whole history up to cutoff
-        and then using those labels for the past is still technically a form of leakage 
-        (future data influencing past cluster centers).
-
+        Implements rolling window clustering to prevent look-ahead bias during backtesting.
+        
         Args:
             macro_features: Macro features DataFrame
             n_clusters: Number of regime clusters to identify
             cutoff_date: Optional cutoff date.
+            window_size: Size of the rolling window (default 252 days ~ 1 year)
+            step_size: Step size for re-fitting the model (default 20 days ~ 1 month)
 
         Returns:
             Series with cluster labels as regime indicators
         """
-        logger.info(f"Detecting clustered regimes with {n_clusters} clusters")
+        logger.info(f"Detecting clustered regimes with {n_clusters} clusters (Window: {window_size})")
 
         if macro_features.empty:
             return pd.Series()
@@ -163,17 +242,54 @@ class RegimeDetectionAgent:
         # Standardize the data
         scaler = StandardScaler()
         scaled_data = scaler.fit_transform(cluster_data)
-
-        # Perform clustering
-        # TODO: Implement rolling/expanding window clustering for strict backtesting safety
-        kmeans = KMeans(n_clusters=n_clusters, random_state=42, n_init=10)
-        cluster_labels = kmeans.fit_predict(scaled_data)
+        
+        # Initialize result array with -1 (unknown)
+        n_samples = len(scaled_data)
+        cluster_labels = np.full(n_samples, -1)
+        
+        # Rolling Window Clustering
+        # We start fitting from window_size
+        if n_samples < window_size:
+            logger.warning(f"Data length ({n_samples}) is smaller than window size ({window_size}). Using static clustering.")
+            kmeans = KMeans(n_clusters=n_clusters, random_state=42, n_init=10)
+            cluster_labels = kmeans.fit_predict(scaled_data)
+        else:
+            # Initial fit
+            kmeans = KMeans(n_clusters=n_clusters, random_state=42, n_init=10)
+            
+            # Iterate through time
+            # For each step, we fit on the PAST window and predict the NEXT step_size points
+            # This ensures no look-ahead bias
+            
+            # First window
+            kmeans.fit(scaled_data[:window_size])
+            cluster_labels[:window_size] = kmeans.labels_
+            
+            for i in range(window_size, n_samples, step_size):
+                # Define current window (expanding or rolling)
+                # Here we use rolling window of size window_size
+                start_idx = max(0, i - window_size)
+                end_idx = i
+                
+                window_data = scaled_data[start_idx:end_idx]
+                
+                # Re-fit model on current window
+                kmeans.fit(window_data)
+                
+                # Predict for the next step_size points
+                next_end_idx = min(i + step_size, n_samples)
+                next_data = scaled_data[i:next_end_idx]
+                
+                if len(next_data) > 0:
+                    predictions = kmeans.predict(next_data)
+                    cluster_labels[i:next_end_idx] = predictions
 
         # Convert to series with datetime index
         regime_series = pd.Series(cluster_labels, index=macro_features.index, name='clustered_regime')
 
         # Map cluster numbers to more meaningful labels
         cluster_mapping = {i: f'regime_{i+1}' for i in range(n_clusters)}
+        cluster_mapping[-1] = 'unknown'
         regime_series = regime_series.map(cluster_mapping)
 
         logger.info(f"Clustered regimes: {regime_series.value_counts().to_dict()}")

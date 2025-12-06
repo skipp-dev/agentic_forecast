@@ -2,7 +2,7 @@
 Model Registry Service
 
 Centralized management for model versioning, storage, and retrieval.
-Handles metadata tracking and ensures reproducibility.
+Handles metadata tracking and ensures reproducibility using MLflow.
 """
 
 import os
@@ -10,54 +10,70 @@ import json
 import logging
 import shutil
 from datetime import datetime
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional, List, Union
 import torch
 import joblib
 from pathlib import Path
+import mlflow
+from mlflow.tracking import MlflowClient
 
 logger = logging.getLogger(__name__)
 
 class ModelRegistryService:
     """
-    Service for managing model artifacts and metadata.
+    Service for managing model artifacts and metadata using MLflow.
     
     Features:
-    - Versioned model storage
+    - Versioned model storage via MLflow
     - Metadata management (hyperparameters, metrics, training config)
     - Model retrieval by ID or criteria (e.g., best performance)
     """
     
-    def __init__(self, storage_path: str = "models/registry"):
+    def __init__(self, storage_path: str = "mlruns"):
         """
-        Initialize the model registry.
+        Initialize the model registry with MLflow.
         
         Args:
-            storage_path: Base directory for storing models and metadata.
+            storage_path: Base directory for MLflow runs (if using local file store).
         """
-        self.storage_path = Path(storage_path)
-        self.storage_path.mkdir(parents=True, exist_ok=True)
-        self.metadata_db_path = self.storage_path / "metadata_db.json"
-        self._load_metadata_db()
+        # Ensure absolute path for local storage
+        self.storage_path = os.path.abspath(storage_path)
+        self.tracking_uri = f"file:///{self.storage_path.replace(os.sep, '/')}"
         
-    def _load_metadata_db(self):
-        """Load the metadata database from disk."""
-        if self.metadata_db_path.exists():
-            try:
-                with open(self.metadata_db_path, 'r') as f:
-                    self.metadata_db = json.load(f)
-            except Exception as e:
-                logger.error(f"Failed to load metadata DB: {e}")
-                self.metadata_db = {}
+        mlflow.set_tracking_uri(self.tracking_uri)
+        self.client = MlflowClient(tracking_uri=self.tracking_uri)
+        
+        logger.info(f"ModelRegistryService initialized with MLflow at {self.tracking_uri}")
+        
+        # Create default experiment if not exists
+        self.experiment_name = "agentic_forecast"
+        
+        # Use client to check for experiment to avoid caching issues
+        experiment = self.client.get_experiment_by_name(self.experiment_name)
+        
+        if experiment is None:
+            self.experiment_id = self.client.create_experiment(self.experiment_name)
         else:
-            self.metadata_db = {}
-            
-    def _save_metadata_db(self):
-        """Save the metadata database to disk."""
-        try:
-            with open(self.metadata_db_path, 'w') as f:
-                json.dump(self.metadata_db, f, indent=2)
-        except Exception as e:
-            logger.error(f"Failed to save metadata DB: {e}")
+            self.experiment_id = experiment.experiment_id
+            # Verify it exists in this store
+            try:
+                self.client.get_experiment(self.experiment_id)
+            except Exception:
+                logger.warning(f"Experiment {self.experiment_name} found but ID {self.experiment_id} not accessible. Recreating.")
+                # Try to create a new one with a unique name if the old one is stuck
+                self.experiment_name = f"agentic_forecast_{datetime.now().strftime('%Y%m%d%H%M%S')}"
+                self.experiment_id = self.client.create_experiment(self.experiment_name)
+
+    def register_model(self, model: Any, symbol: str, model_type: str, 
+                       training_results: Dict[str, Any], training_config: Dict[str, Any], 
+                       feature_names: List[str], framework: str = "pytorch") -> str:
+        """Alias for save_model to support legacy tests."""
+        metadata = {
+            'metrics': training_results.get('final_metrics', {}),
+            'hyperparameters': training_config,
+            'feature_names': feature_names
+        }
+        return self.save_model(model, symbol, model_type, metadata, framework)
 
     def save_model(self, 
                    model: Any, 
@@ -76,147 +92,217 @@ class ModelRegistryService:
             framework: The framework used ('pytorch', 'sklearn', 'neuralforecast').
             
         Returns:
-            str: The unique model ID.
+            str: The unique model ID (MLflow Run ID).
         """
-        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-        model_id = f"{symbol}_{model_type}_{timestamp}"
+        run_name = f"{symbol}_{model_type}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
         
-        # Create directory for this model
-        model_dir = self.storage_path / symbol / model_type / model_id
-        model_dir.mkdir(parents=True, exist_ok=True)
-        
-        # Save model artifact
-        artifact_path = model_dir / "model.pt" # Default extension
+        # Use client to create run to avoid global state issues with experiment resolution
+        run = self.client.create_run(experiment_id=self.experiment_id, run_name=run_name)
+        run_id = run.info.run_id
         
         try:
-            if framework == "pytorch":
-                if hasattr(model, 'state_dict'):
-                    torch.save(model.state_dict(), artifact_path)
-                else:
-                    torch.save(model, artifact_path)
-            elif framework == "sklearn":
-                artifact_path = model_dir / "model.joblib"
-                joblib.dump(model, artifact_path)
-            elif framework == "neuralforecast":
-                # NeuralForecast models usually save to a directory
-                # If 'model' is a NeuralForecast object, use its save method
-                if hasattr(model, 'save'):
-                    model.save(str(model_dir / "checkpoints"))
-                    artifact_path = model_dir / "checkpoints"
-                else:
-                    # If it's a raw PyTorch model inside NF
-                    torch.save(model, artifact_path)
-            else:
-                logger.warning(f"Unknown framework {framework}, attempting torch save")
-                torch.save(model, artifact_path)
+            # Use start_run with the specific run_id to enable fluent API (log_model, etc.)
+            # We must ensure tracking URI is set correctly for this to work
+            mlflow.set_tracking_uri(self.tracking_uri)
+            
+            with mlflow.start_run(run_id=run_id):
+                # Log Parameters
+                params = metadata.get('hyperparameters', {})
+                params.update(metadata.get('training_config', {}))
+                # Flatten nested dicts if necessary or log as json string
+                for k, v in params.items():
+                    mlflow.log_param(k, str(v)) # Convert to str to be safe
                 
-            logger.info(f"Saved model artifact to {artifact_path}")
+                # Log Metrics
+                metrics = metadata.get('metrics', {})
+                for k, v in metrics.items():
+                    if isinstance(v, (int, float)):
+                        mlflow.log_metric(k, v)
+                
+                # Log Tags
+                mlflow.set_tag("symbol", symbol)
+                mlflow.set_tag("model_type", model_type)
+                mlflow.set_tag("framework", framework)
+                mlflow.set_tag("created_at", datetime.now().isoformat())
+                
+                # Log Model Artifact
+                if framework == "pytorch":
+                    mlflow.pytorch.log_model(model, "model")
+                elif framework == "sklearn":
+                    mlflow.sklearn.log_model(model, "model")
+                elif framework == "neuralforecast":
+                    # NeuralForecast integration with MLflow is custom
+                    # We save locally then log artifacts
+                    local_path = f"temp_nf_{run_id}"
+                    if hasattr(model, 'save'):
+                        model.save(local_path)
+                        mlflow.log_artifacts(local_path, artifact_path="model")
+                        shutil.rmtree(local_path, ignore_errors=True)
+                    else:
+                        # Fallback
+                        mlflow.pytorch.log_model(model, "model")
+                else:
+                    logger.warning(f"Unknown framework {framework}, logging as generic artifact")
+                    # Try pickling
+                    mlflow.log_text(str(model), "model_repr.txt")
+                    
+            logger.info(f"Saved model {run_name} with Run ID {run_id}")
+            return run_id
             
         except Exception as e:
             logger.error(f"Failed to save model artifact: {e}")
+            self.client.set_terminated(run_id, status="FAILED")
             raise e
-            
-        # Enrich and save metadata
-        full_metadata = {
-            'model_id': model_id,
-            'symbol': symbol,
-            'model_type': model_type,
-            'framework': framework,
-            'created_at': datetime.now().isoformat(),
-            'artifact_path': str(artifact_path),
-            'metrics': metadata.get('metrics', {}),
-            'hyperparameters': metadata.get('hyperparameters', {}),
-            'training_config': metadata.get('training_config', {})
-        }
-        
-        metadata_path = model_dir / "metadata.json"
-        with open(metadata_path, 'w') as f:
-            json.dump(full_metadata, f, indent=2)
-            
-        # Update central DB
-        self.metadata_db[model_id] = full_metadata
-        self._save_metadata_db()
-        
-        return model_id
 
     def get_model_metadata(self, model_id: str) -> Optional[Dict[str, Any]]:
-        """Retrieve metadata for a specific model ID."""
-        return self.metadata_db.get(model_id)
+        """Retrieve metadata for a specific model ID (Run ID)."""
+        try:
+            run = self.client.get_run(model_id)
+            return {
+                'model_id': run.info.run_id,
+                'symbol': run.data.tags.get('symbol'),
+                'model_type': run.data.tags.get('model_type'),
+                'framework': run.data.tags.get('framework'),
+                'created_at': run.data.tags.get('created_at'),
+                'metrics': run.data.metrics,
+                'hyperparameters': run.data.params,
+                'status': run.info.status
+            }
+        except Exception as e:
+            logger.error(f"Failed to get metadata for {model_id}: {e}")
+            return None
 
     def list_models(self, symbol: Optional[str] = None, model_type: Optional[str] = None) -> List[Dict[str, Any]]:
         """List models matching criteria."""
-        models = list(self.metadata_db.values())
-        
+        filter_string = ""
+        conditions = []
         if symbol:
-            models = [m for m in models if m['symbol'] == symbol]
+            conditions.append(f"tags.symbol = '{symbol}'")
         if model_type:
-            models = [m for m in models if m['model_type'] == model_type]
+            conditions.append(f"tags.model_type = '{model_type}'")
             
+        filter_string = " AND ".join(conditions) if conditions else None
+        
+        runs = self.client.search_runs(
+            experiment_ids=[self.experiment_id],
+            filter_string=filter_string,
+            order_by=["attribute.start_time DESC"]
+        )
+        
+        models = []
+        for run in runs:
+            models.append({
+                'model_id': run.info.run_id,
+                'symbol': run.data.tags.get('symbol'),
+                'model_type': run.data.tags.get('model_type'),
+                'metrics': run.data.metrics,
+                'hyperparameters': run.data.params,
+                'stage': run.data.tags.get('stage', 'None')
+            })
         return models
 
     def get_best_model(self, symbol: str, metric: str = "val_loss", mode: str = "min") -> Optional[Dict[str, Any]]:
         """
         Get the best model for a symbol based on a metric.
-        
-        Args:
-            symbol: The symbol to query.
-            metric: The metric key to optimize (e.g., 'val_loss', 'mae').
-            mode: 'min' (lower is better) or 'max' (higher is better).
-            
-        Returns:
-            Dict: Metadata of the best model.
         """
-        models = self.list_models(symbol=symbol)
-        if not models:
+        filter_string = f"tags.symbol = '{symbol}'"
+        order = f"metrics.{metric} ASC" if mode == "min" else f"metrics.{metric} DESC"
+        
+        runs = self.client.search_runs(
+            experiment_ids=[self.experiment_id],
+            filter_string=filter_string,
+            order_by=[order],
+            max_results=1
+        )
+        
+        if not runs:
             return None
             
-        # Filter models that have the metric
-        valid_models = [m for m in models if 'metrics' in m and metric in m['metrics']]
-        if not valid_models:
+        run = runs[0]
+        return {
+            'model_id': run.info.run_id,
+            'symbol': run.data.tags.get('symbol'),
+            'model_type': run.data.tags.get('model_type'),
+            'metrics': run.data.metrics,
+            'hyperparameters': run.data.params
+        }
+
+    def transition_model_stage(self, model_id: str, stage: str):
+        """
+        Transition a model to a new stage (e.g., 'Staging', 'Production', 'Archived').
+        """
+        valid_stages = ['None', 'Staging', 'Production', 'Archived']
+        if stage not in valid_stages:
+            raise ValueError(f"Invalid stage: {stage}. Must be one of {valid_stages}")
+            
+        # If promoting to Production, demote others for the same symbol FIRST
+        if stage == 'Production':
+            metadata = self.get_model_metadata(model_id)
+            if metadata and metadata.get('symbol'):
+                self._demote_other_production_models(metadata['symbol'], model_id)
+
+        self.client.set_tag(model_id, "stage", stage)
+        logger.info(f"Transitioned model {model_id} to stage {stage}")
+
+    def _demote_other_production_models(self, symbol: str, new_prod_id: str):
+        """Demote existing Production models for a symbol to Archived."""
+        # Find ALL production models
+        filter_string = f"tags.symbol = '{symbol}' AND tags.stage = 'Production'"
+        runs = self.client.search_runs(
+            experiment_ids=[self.experiment_id],
+            filter_string=filter_string
+        )
+        
+        for run in runs:
+            if run.info.run_id != new_prod_id:
+                self.client.set_tag(run.info.run_id, "stage", "Archived")
+                logger.info(f"Demoted previous production model {run.info.run_id} to Archived")
+
+    def get_production_model(self, symbol: str) -> Optional[Dict[str, Any]]:
+        """Retrieve the current Production model for a symbol."""
+        filter_string = f"tags.symbol = '{symbol}' AND tags.stage = 'Production'"
+        runs = self.client.search_runs(
+            experiment_ids=[self.experiment_id],
+            filter_string=filter_string,
+            max_results=1,
+            order_by=["attribute.start_time DESC"]
+        )
+        
+        if not runs:
             return None
             
-        def get_metric_val(m):
-            return m['metrics'][metric]
-            
-        if mode == "min":
-            best_model = min(valid_models, key=get_metric_val)
-        else:
-            best_model = max(valid_models, key=get_metric_val)
-            
-        return best_model
+        run = runs[0]
+        return {
+            'model_id': run.info.run_id,
+            'symbol': run.data.tags.get('symbol'),
+            'model_type': run.data.tags.get('model_type'),
+            'metrics': run.data.metrics,
+            'hyperparameters': run.data.params,
+            'stage': 'Production'
+        }
 
     def load_model(self, model_id: str) -> Any:
         """
         Load a model artifact into memory.
-        
-        Args:
-            model_id: The ID of the model to load.
-            
-        Returns:
-            The loaded model object.
         """
-        metadata = self.get_model_metadata(model_id)
-        if not metadata:
-            raise ValueError(f"Model ID {model_id} not found")
-            
-        artifact_path = Path(metadata['artifact_path'])
-        framework = metadata.get('framework', 'pytorch')
-        
-        if not artifact_path.exists():
-            raise FileNotFoundError(f"Artifact not found at {artifact_path}")
-            
         try:
+            run = self.client.get_run(model_id)
+            framework = run.data.tags.get('framework', 'pytorch')
+            
+            model_uri = f"runs:/{model_id}/model"
+            
             if framework == "pytorch":
-                # This assumes we know the class to instantiate if it's a state_dict
-                # For now, just return the loaded object (might be state_dict or full model)
-                return torch.load(artifact_path)
+                return mlflow.pytorch.load_model(model_uri)
             elif framework == "sklearn":
-                return joblib.load(artifact_path)
+                return mlflow.sklearn.load_model(model_uri)
             elif framework == "neuralforecast":
+                # For NF, we need to download artifacts and load
+                local_path = mlflow.artifacts.download_artifacts(run_id=model_id, artifact_path="model")
                 from neuralforecast import NeuralForecast
-                return NeuralForecast.load(str(artifact_path))
+                return NeuralForecast.load(local_path)
             else:
                 raise ValueError(f"Unsupported framework: {framework}")
+                
         except Exception as e:
             logger.error(f"Failed to load model {model_id}: {e}")
             raise e
@@ -224,47 +310,24 @@ class ModelRegistryService:
     def get_last_hpo_run(self, symbol: str) -> Optional[float]:
         """
         Get the timestamp of the last HPO run for a symbol.
-        
-        Args:
-            symbol: The symbol to check.
-            
-        Returns:
-            Timestamp of the last run, or None if never run.
         """
-        # We can store this in a separate file or in the metadata DB
-        # For simplicity, let's use a separate JSON file for HPO tracking
-        hpo_tracker_path = self.storage_path / "hpo_tracker.json"
-        if hpo_tracker_path.exists():
-            try:
-                with open(hpo_tracker_path, 'r') as f:
-                    tracker = json.load(f)
-                return tracker.get(symbol)
-            except Exception as e:
-                logger.error(f"Failed to load HPO tracker: {e}")
-                return None
+        runs = self.client.search_runs(
+            experiment_ids=[self.experiment_id],
+            filter_string=f"tags.symbol = '{symbol}'",
+            order_by=["attribute.start_time DESC"],
+            max_results=1
+        )
+        
+        if runs:
+            # Return timestamp in seconds
+            return runs[0].info.start_time / 1000.0
         return None
 
     def set_last_hpo_run(self, symbol: str, timestamp: float):
         """
         Set the timestamp of the last HPO run for a symbol.
-        
-        Args:
-            symbol: The symbol.
-            timestamp: The timestamp.
         """
-        hpo_tracker_path = self.storage_path / "hpo_tracker.json"
-        tracker = {}
-        if hpo_tracker_path.exists():
-            try:
-                with open(hpo_tracker_path, 'r') as f:
-                    tracker = json.load(f)
-            except Exception as e:
-                logger.error(f"Failed to load HPO tracker: {e}")
-        
-        tracker[symbol] = timestamp
-        
-        try:
-            with open(hpo_tracker_path, 'w') as f:
-                json.dump(tracker, f, indent=2)
-        except Exception as e:
-            logger.error(f"Failed to save HPO tracker: {e}")
+        with mlflow.start_run(experiment_id=self.experiment_id, run_name=f"HPO_MARKER_{symbol}") as run:
+            mlflow.set_tag("symbol", symbol)
+            mlflow.set_tag("type", "hpo_marker")
+            mlflow.log_param("timestamp", timestamp)

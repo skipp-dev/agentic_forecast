@@ -1,4 +1,5 @@
 import unittest
+from unittest.mock import patch
 import os
 import shutil
 from pathlib import Path
@@ -25,38 +26,24 @@ class TestNeuralForecastStubs(unittest.TestCase):
 
     def test_autodlinear_importerror_when_neuralforecast_missing(self):
         # Simulate absence of neuralforecast
-        original_flag = mz._HAS_NEURALFORECAST
-        original_cls = mz.AutoDLinear
-        try:
-            mz._HAS_NEURALFORECAST = False
-            mz.AutoDLinear = None
+        with patch('models.model_zoo._HAS_NEURALFORECAST', False):
             zoo = ModelZoo()
             with self.assertRaises(ImportError):
                 zoo.train_autodlinear(self.spec, self.hpo)
-        finally:
-            mz._HAS_NEURALFORECAST = original_flag
-            mz.AutoDLinear = original_cls
 
     def test_autonbeats_importerror_when_neuralforecast_missing(self):
-        # AutoNBEATS is not in ModelZoo anymore, it seems. But let us check if it is there.
-        # Based on read_file of model_zoo.py, it has train_autodlinear, train_lstm (NHITS), train_tft.
-        # It does NOT have train_autonbeats.
-        pass
+        # AutoNBEATS
+        with patch('models.model_zoo._HAS_NEURALFORECAST', False):
+            zoo = ModelZoo()
+            with self.assertRaises(ImportError):
+                zoo.train_autonbeats(self.spec, self.hpo)
 
     def test_autonhits_importerror_when_neuralforecast_missing(self):
-        # NHITS is used in train_lstm
-        original_flag = mz._HAS_NEURALFORECAST
-        original_cls = mz.AutoNHITS
-        try:
-            mz._HAS_NEURALFORECAST = False
-            mz.AutoNHITS = None
+        # NHITS
+        with patch('models.model_zoo._HAS_NEURALFORECAST', False):
             zoo = ModelZoo()
-            # train_lstm uses NHITS
             with self.assertRaises(ImportError):
-                zoo.train_lstm(self.spec, self.hpo)
-        finally:
-            mz._HAS_NEURALFORECAST = original_flag
-            mz.AutoNHITS = original_cls
+                zoo.train_autonhits(self.spec, self.hpo)
 
     def test_persist_nf_model_returns_artifact_path(self):
         zoo = ModelZoo()

@@ -14,7 +14,7 @@ import time
 
 from src.gpu_services import GPUServices
 from src.services.model_registry_service import ModelRegistryService
-from models.model_zoo import DataSpec
+from src.data.types import DataSpec
 from sklearn.linear_model import LinearRegression
 from src.agents.graph_model_agent import GraphModelAgent, GraphTrainingData
 
@@ -159,11 +159,15 @@ class GPUTrainingService:
                 execution_time = time.time() - start_time
                 
                 metadata = {
-                    'metrics': {}, # TODO: Extract metrics
+                    'metrics': {'status': 'completed', 'note': 'Metrics extraction pending GraphModelAgent update'},
                     'hyperparameters': hyperparams or {},
                     'training_config': {'job_id': job_id},
                     'execution_time': execution_time
                 }
+                
+                # Extract metrics if available in agent
+                if hasattr(agent, 'history') and agent.history:
+                    metadata['metrics'] = agent.history[-1] if isinstance(agent.history, list) else agent.history
                 
                 # We need to wrap the model or save the agent's model
                 # GraphModelAgent.model is the internal model
@@ -352,6 +356,9 @@ class GPUTrainingService:
                     mse = np.mean((y_true - y_pred)**2)
                     metrics['mse'] = float(mse)
                     
+                    # Calculate RMSE
+                    metrics['rmse'] = float(np.sqrt(mse))
+
                     # Calculate MAPE
                     # Avoid division by zero
                     mask = y_true != 0
@@ -361,6 +368,14 @@ class GPUTrainingService:
                     else:
                         metrics['mape'] = None
                     
+                    # Calculate R2 Score
+                    ss_res = np.sum((y_true - y_pred) ** 2)
+                    ss_tot = np.sum((y_true - np.mean(y_true)) ** 2)
+                    if ss_tot != 0:
+                        metrics['r2'] = float(1 - (ss_res / ss_tot))
+                    else:
+                        metrics['r2'] = 0.0
+
                     logger.info(f"Evaluation metrics for {symbol}: {metrics}")
                 else:
                     logger.warning(f"No overlap between forecasts and validation data for {symbol}")

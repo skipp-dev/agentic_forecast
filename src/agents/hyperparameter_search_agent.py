@@ -27,7 +27,7 @@ from src.gpu_services import get_gpu_services
 from src.data_pipeline import DataPipeline
 from src.services.training_service import GPUTrainingService
 from src.services.model_registry_service import ModelRegistryService
-from models.model_zoo import DataSpec
+from src.data.types import DataSpec
 
 logger = logging.getLogger(__name__)
 
@@ -66,6 +66,21 @@ class HyperparameterSearchAgent:
         self.max_trials = 50
         self.timeout_minutes = 30
         self.n_jobs = 1  # Sequential for GPU memory management
+        
+        # Budget Enforcement
+        self.budget_config = {
+            'DAILY': {
+                'max_symbols': 10,
+                'max_trials_per_symbol': 5,
+                'max_gpu_hours': 1.0
+            },
+            'WEEKEND_HPO': {
+                'max_symbols': 200,
+                'max_trials_per_symbol': 50,
+                'max_gpu_hours': 24.0
+            }
+        }
+        self.current_gpu_usage_hours = 0.0
 
         # Results storage
         self.search_history = []
@@ -73,10 +88,21 @@ class HyperparameterSearchAgent:
 
         logger.info("Hyperparameter Search Agent initialized")
 
+    def set_budget(self, run_type: str):
+        """Set HPO budget based on run type."""
+        if run_type in self.budget_config:
+            cfg = self.budget_config[run_type]
+            self.max_trials = cfg['max_trials_per_symbol']
+            # Note: max_gpu_hours and max_symbols need to be enforced at the orchestration level
+            # or by tracking usage across calls.
+            logger.info(f"Set HPO budget for {run_type}: Max Trials={self.max_trials}")
+        else:
+            logger.warning(f"Unknown run type {run_type}, using default budget.")
+
     @property
     def model_families(self) -> List[str]:
         """List of supported model families."""
-        return ['NLinear', 'NHITS', 'NBEATS', 'TFT', 'AutoDLinear', 'BaselineLinear']
+        return ['NLinear', 'NHITS', 'NBEATS', 'TFT', 'AutoDLinear', 'AutoNHITS', 'AutoNBEATS', 'AutoTFT', 'BaselineLinear']
 
     def define_search_space(self, model_type: str) -> Dict[str, Any]:
         """

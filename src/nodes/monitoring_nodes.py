@@ -48,3 +48,11 @@ def monitoring_node(state: PipelineGraphState) -> PipelineGraphState:
     
     return state
 
+
+
+# Alias for backward compatibility
+drift_detection_node = monitoring_node
+
+
+# Alias for backward compatibility
+risk_assessment_node = monitoring_node

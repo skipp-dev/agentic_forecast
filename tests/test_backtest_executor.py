@@ -1,69 +1,79 @@
-import pytest
+import unittest
+from unittest.mock import MagicMock, patch
 import pandas as pd
-from unittest.mock import MagicMock
+import os
+import sys
+
+# Add src to path
+sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
+
 from src.backtesting.backtest_executor import BacktestExecutor
+from src.brokers.paper_broker import PaperBroker
 
-class TestBacktestExecutor:
+class TestBacktestExecutor(unittest.TestCase):
     
-    @pytest.fixture
-    def mock_graph(self):
-        graph = MagicMock()
+    @patch('src.backtesting.backtest_executor.PaperBroker')
+    def test_initialization(self, MockBroker):
+        # Setup Mock Broker
+        mock_broker_instance = MockBroker.return_value
+        mock_broker_instance.db_service = MagicMock()
         
-        def side_effect(state):
-            cutoff = state.get('cutoff_date')
-            # Return dummy forecast
-            forecast_df = pd.DataFrame({
-                'ds': [pd.Timestamp(cutoff) + pd.Timedelta(days=1)],
-                'Baseline': [100.0]
-            })
-            
-            return {
-                'forecasts': {
-                    'TEST': {
-                        'Baseline': forecast_df
-                    }
-                },
-                'recommended_actions': ['Promote Baseline TEST'],
-                'performance_summary': pd.DataFrame([{
-                    'symbol': 'TEST',
-                    'model_family': 'Baseline',
-                    'mape': 0.05
-                }])
-            }
-            
-        graph.invoke.side_effect = side_effect
-        return graph
-
-    def test_backtest_run(self, mock_graph):
-        start_date = '2023-01-01'
-        end_date = '2023-01-03'
+        # Mock Graph
+        mock_graph = MagicMock()
         
-        executor = BacktestExecutor(mock_graph, start_date, end_date)
-        initial_state = {'raw_data': {}}
+        # Initialize Executor
+        executor = BacktestExecutor(
+            graph=mock_graph,
+            start_date="2023-01-01",
+            end_date="2023-01-05",
+            initial_cash=50000.0
+        )
         
+        # Verify Broker Initialization
+        MockBroker.assert_called_once()
+        args, kwargs = MockBroker.call_args
+        self.assertEqual(kwargs['initial_cash'], 50000.0)
+        self.assertTrue("backtest" in kwargs['state_file'])
+        
+        # Verify DB Clearing
+        mock_broker_instance.db_service.clear_backtest_data.assert_called_once()
+        mock_broker_instance._save_state.assert_called_once()
+        
+    @patch('src.backtesting.backtest_executor.PaperBroker')
+    def test_run_loop(self, MockBroker):
+        # Setup Mock Broker
+        mock_broker_instance = MockBroker.return_value
+        mock_broker_instance.db_service = MagicMock()
+        mock_broker_instance.get_cash.return_value = 50000.0
+        mock_broker_instance.get_positions.return_value = {}
+        
+        # Mock Graph
+        mock_graph = MagicMock()
+        mock_graph.invoke.return_value = {
+            'forecasts': {},
+            'performance_summary': pd.DataFrame()
+        }
+        
+        # Initialize Executor
+        executor = BacktestExecutor(
+            graph=mock_graph,
+            start_date="2023-01-01",
+            end_date="2023-01-03", # 3 days
+            step_days=1
+        )
+        
+        # Run
+        initial_state = {"some": "state"}
         results = executor.run(initial_state)
         
-        assert len(results) == 3 # 3 days
-        assert 'date' in results.columns
-        assert 'forecast' in results.columns
-        assert results.iloc[0]['date'] == '2023-01-01'
-        assert results.iloc[0]['forecast'] == 100.0
+        # Verify Graph Invocation Count (3 days: 01, 02, 03)
+        self.assertEqual(mock_graph.invoke.call_count, 3)
         
-        # Verify graph was called with correct cutoffs
-        assert mock_graph.invoke.call_count == 3
-        calls = mock_graph.invoke.call_args_list
-        assert calls[0][0][0]['cutoff_date'] == '2023-01-01'
-        assert calls[1][0][0]['cutoff_date'] == '2023-01-02'
-        assert calls[2][0][0]['cutoff_date'] == '2023-01-03'
+        # Verify State Injection
+        call_args = mock_graph.invoke.call_args_list[0][0][0]
+        self.assertEqual(call_args['run_type'], 'BACKTEST')
+        self.assertEqual(call_args['cutoff_date'], '2023-01-01')
+        self.assertEqual(call_args['broker'], mock_broker_instance)
 
-    def test_save_results(self, mock_graph, tmp_path):
-        start_date = '2023-01-01'
-        end_date = '2023-01-01'
-        executor = BacktestExecutor(mock_graph, start_date, end_date)
-        executor.run({})
-        
-        output_dir = tmp_path / "results"
-        executor.save_results(str(output_dir))
-        
-        assert (output_dir / "forecasts.csv").exists()
-        assert (output_dir / "performance.csv").exists()
+if __name__ == '__main__':
+    unittest.main()

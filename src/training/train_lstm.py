@@ -21,8 +21,8 @@ project_root = Path(__file__).parent.parent.parent
 sys.path.append(str(project_root))
 
 from src.data.unified_ingestion_v2 import UnifiedDataIngestion
-from models.lstm_forecaster import LSTMForecaster
-from models.transformer_forecaster import TransformerForecaster
+from src.legacy_models.lstm_forecaster import LSTMForecaster
+# from models.transformer_forecaster import TransformerForecaster
 
 # Set up logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')

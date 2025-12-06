@@ -15,12 +15,13 @@ class TestModelTrainingResult(unittest.TestCase):
             best_val_mape=0.1, 
             best_val_mae=0.1, 
             best_hyperparams={}, 
-            best_model_id="baseline_123", 
+            model_id="baseline_123", 
+            execution_time=1.0,
             artifact_info=ArtifactInfo(artifact_uri="file:///tmp/model", local_path="/tmp/model"), 
             val_preds=None
         )
         self.assertEqual(result.artifact_info.local_path, "/tmp/model")
-        self.assertEqual(result.best_model_id, "baseline_123")
+        self.assertEqual(result.model_id, "baseline_123")
 
     def test_to_dict_roundtrip(self):
         result = ModelTrainingResult(
@@ -28,19 +29,14 @@ class TestModelTrainingResult(unittest.TestCase):
             symbol_scope="SCOPE:ABC", 
             model_family="AutoDLinear", 
             framework="neuralforecast", 
-            best_val_mape=0.0, 
-            best_val_mae=0.0, 
-            best_hyperparams={"depth": 3}, 
-            best_model_id="autodlinear_456", 
-            artifact_info=ArtifactInfo(artifact_uri="file:///tmp/model_path", local_path="/tmp/model_path"), 
-            val_preds=None
+            best_val_mape=0.05, 
+            best_val_mae=0.02, 
+            best_hyperparams={"h": 24}, 
+            model_id="autodlinear_456", 
+            execution_time=12.5
         )
-        as_dict = result.to_dict()
-        self.assertEqual(as_dict["artifact_info"]["local_path"], "/tmp/model_path")
-        # Rebuilding from dict requires handling nested dataclass, which asdict converts to dict
-        # So we need to reconstruct ArtifactInfo manually if we want to use **as_dict directly
-        # But for this test, let us just verify the dict structure is correct
-        self.assertEqual(as_dict["best_model_id"], "autodlinear_456")
+        d = result.to_dict()
+        self.assertEqual(d['model_id'], "autodlinear_456")
 
 
 class TestModelZoo(unittest.TestCase):

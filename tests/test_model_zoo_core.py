@@ -35,8 +35,8 @@ class TestModelZooCoreFamilies(unittest.TestCase):
             "NHITS": [100.0] * len(self.ds.val_df)
         })
         
-        # train_lstm uses NHITS (aliased to AutoNHITS)
-        res = self.mz.train_lstm(self.ds)
+        # train_autonhits uses NHITS (aliased to AutoNHITS)
+        res = self.mz.train_autonhits(self.ds)
         self.assertEqual(res.model_family, "AutoNHITS")
         self._assert_result(res)
 
@@ -50,7 +50,7 @@ class TestModelZooCoreFamilies(unittest.TestCase):
         })
 
         res = self.mz.train_tft(self.ds)
-        self.assertEqual(res.model_family, "AutoTFT")
+        self.assertEqual(res.model_family, "TFT")
         self._assert_result(res)
 
     @patch("models.model_zoo.NeuralForecast")

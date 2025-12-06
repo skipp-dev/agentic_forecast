@@ -23,11 +23,14 @@ from alpha_vantage_client import AlphaVantageClient, get_stock_data, get_technic
 # Import ML models
 sys.path.append(os.path.dirname(__file__))
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
-from src.models.lstm_forecaster import LSTMForecaster
+from src.legacy_models.lstm_forecaster import LSTMForecaster
 from src.ensemble_methods import EnsembleForecaster
 
 from src.drift_detection import DriftDetector
 from src.services.database_service import DatabaseService
+from src.features.feature_engineer import FeatureEngineer
+from src.data.validation import validate_stock_data
+from src.clients.yfinance_client import YFinanceClient
 
 logger = logging.getLogger(__name__)
 
@@ -44,6 +47,7 @@ class DataPipeline:
             alpha_vantage_key: API key for Alpha Vantage
         """
         self.av_client = AlphaVantageClient(alpha_vantage_key)
+        self.yf_client = YFinanceClient()
         self.db_service = DatabaseService()
         self.scaler_X = RobustScaler()
         self.scaler_y = RobustScaler()
@@ -54,7 +58,7 @@ class DataPipeline:
     def fetch_stock_data(self, symbol: str, period: str = '2y', interval: str = 'daily',
                         include_technical: bool = True) -> pd.DataFrame:
         """
-        Fetch stock data from Alpha Vantage.
+        Fetch stock data from Alpha Vantage with fallback to YFinance.
 
         Args:
             symbol: Stock symbol
@@ -67,46 +71,58 @@ class DataPipeline:
         """
         logger.info(f"Fetching {period} {interval} data for {symbol}")
 
-        # Get price data
-        price_data = get_stock_data(symbol, period, interval)
+        # Try Primary Provider (Alpha Vantage)
+        price_data = pd.DataFrame()
+        try:
+            price_data = get_stock_data(symbol, period, interval)
+        except Exception as e:
+            logger.warning(f"Alpha Vantage fetch failed: {e}")
+
+        # Fallback to YFinance if empty
+        if price_data.empty:
+            logger.warning(f"Primary provider failed for {symbol}. Attempting fallback to YFinance.")
+            try:
+                price_data = self.yf_client.fetch_stock_data(symbol, period, interval)
+            except Exception as e:
+                logger.error(f"Fallback provider failed: {e}")
 
         if price_data.empty:
-            logger.error(f"No data fetched for {symbol}")
+            logger.error(f"All data providers failed for {symbol}")
             return pd.DataFrame()
 
         # Add technical indicators if requested
+        # Note: get_technical_features is currently tied to Alpha Vantage. 
+        # If we are in fallback mode, we should calculate them locally using FeatureEngineer or TA-Lib
+        # For now, we'll rely on FeatureEngineer for basic ones, and skip AV-specific ones if AV failed.
+        
+        combined_data = price_data
+        
         if include_technical:
-            try:
-                tech_features = get_technical_features(symbol, ['SMA', 'EMA', 'RSI', 'MACD'])
-                # Merge on date index
-                combined_data = price_data.join(tech_features, how='left')
-                # Forward fill missing technical indicator values
-                # NO BACKWARD FILL to prevent look-ahead bias
-                combined_data = combined_data.fillna(method='ffill')
-            except Exception as e:
-                logger.warning(f"Could not fetch technical indicators: {e}")
-                combined_data = price_data
-        else:
-            combined_data = price_data
+            # If we have AV data, try to get AV tech indicators
+            # But if we are on fallback, we skip this and rely on FeatureEngineer later
+            # TODO: Abstract technical indicator fetching too
+            pass
 
-        # Add basic derived features
+        # Add basic derived features using FeatureEngineer
         # Use adjusted_close for returns if available to handle splits/dividends correctly
         if 'adjusted_close' in combined_data.columns:
             price_col = 'adjusted_close'
         else:
             price_col = 'close'
             
-        combined_data['returns'] = combined_data[price_col].pct_change(fill_method=None)
-        combined_data['log_returns'] = np.log(combined_data[price_col] / combined_data[price_col].shift(1))
-        
-        # Volatility should be based on adjusted returns
-        combined_data['volatility'] = combined_data['returns'].rolling(20).std()
-        combined_data['volume_ma'] = combined_data['volume'].rolling(20).mean()
+        combined_data = FeatureEngineer.add_technical_features(combined_data, price_col=price_col)
 
         # Fill NaN values
         # Drop initial NaNs instead of fabricating data
         combined_data = combined_data.dropna()
-        combined_data = combined_data.fillna(0)
+        combined_data = combined_data.ffill().bfill().fillna(0)
+
+        # Validate Data
+        try:
+            combined_data = validate_stock_data(combined_data)
+        except ValueError as e:
+            logger.error(f"Data validation failed for {symbol}: {e}")
+            return pd.DataFrame()
 
         logger.info(f"Fetched {len(combined_data)} data points with {len(combined_data.columns)} features")
         
@@ -119,7 +135,7 @@ class DataPipeline:
         return combined_data
 
     def prepare_ml_data(self, data: pd.DataFrame, target_column: str = 'log_returns',
-                       sequence_length: int = 60, test_size: float = 0.2) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+                       sequence_length: int = 60, test_size: float = 0.2, embargo_size: int = 0) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
         """
         Prepare data for ML model training.
 
@@ -128,6 +144,8 @@ class DataPipeline:
             target_column: Column to predict (default: 'log_returns')
             sequence_length: Length of input sequences
             test_size: Proportion of data for testing
+            embargo_size: Number of samples to drop between train and test to prevent leakage.
+                          Should be >= largest rolling window size used in feature engineering.
 
         Returns:
             X_train, X_test, y_train, y_test
@@ -158,10 +176,20 @@ class DataPipeline:
         # Split into train/test BEFORE scaling to prevent leakage
         split_idx = int(len(X) * (1 - test_size))
         
+        # Apply Embargo: Reduce training set end or delay test set start
+        # Here we delay test set start to keep training set maximal
+        test_start_idx = split_idx + embargo_size
+        
+        if test_start_idx >= len(X):
+            raise ValueError(f"Embargo size {embargo_size} is too large for test set size")
+
         X_train_raw = X[:split_idx]
-        X_test_raw = X[split_idx:]
+        X_test_raw = X[test_start_idx:]
         y_train_raw = y[:split_idx]
-        y_test_raw = y[split_idx:]
+        y_test_raw = y[test_start_idx:]
+        
+        if embargo_size > 0:
+            logger.info(f"Applied embargo of {embargo_size} samples between train and test.")
 
         # Scale data (Fit on Train, Transform on Test)
         X_train_scaled = self.scaler_X.fit_transform(X_train_raw)

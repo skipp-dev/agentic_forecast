@@ -14,8 +14,10 @@ def validate_report_consistency(report_html: str, metrics: Dict[str, Any]):
     """
     Scan the report for numbers and ensure they match the metrics.
     This is a heuristic check to catch hallucinations.
+    Returns: (is_valid, errors)
     """
     report_text = report_html.lower() # Simple normalization for searching
+    errors = []
 
     # --- 1. Anomaly Count Check ---
     # Extract anomaly count from text like "found 573 anomalies" or "573 anomalies detected"
@@ -33,7 +35,7 @@ def validate_report_consistency(report_html: str, metrics: Dict[str, Any]):
         if claimed_count != true_anomalies:
             msg = f"Report claims {claimed_count} anomalies, but metrics show {true_anomalies}."
             logger.error(msg)
-            raise ReportConsistencyError(msg)
+            errors.append(msg)
 
     # --- 2. Total Symbols Check ---
     # "X symbols", "total symbols: X"
@@ -48,8 +50,36 @@ def validate_report_consistency(report_html: str, metrics: Dict[str, Any]):
         if claimed_count != true_symbols:
             msg = f"Report claims Total Symbols: {claimed_count}, but metrics show {true_symbols}."
             logger.error(msg)
-            raise ReportConsistencyError(msg)
+            errors.append(msg)
 
+    # --- 5. Guardrail Status Check ---
+    guardrails = metrics.get("guardrails", {})
+    status = guardrails.get("status", "unknown")
+    
+    if status == "failing":
+        if "system status: healthy" in report_text:
+             msg = "Report claims Healthy status but guardrails are failing."
+             logger.error(msg)
+             errors.append(msg)
+
+    # --- 6. Code Block / Code Change Check ---
+    # The agent is prohibited from suggesting code changes.
+    # We look for markdown code blocks that might contain Python code.
+    # We allow small inline code for variable names (backticks), but not multi-line blocks with 'def ', 'class ', 'import '.
+    
+    code_block_matches = re.findall(r"```(.*?)```", report_text, re.DOTALL)
+    for block in code_block_matches:
+        block_lower = block.lower()
+        if any(keyword in block_lower for keyword in ["def ", "class ", "import ", "from src", "return "]):
+            msg = "Code block detected with code keywords (def/class/import). This violates 'NO CODE CHANGES' rule."
+            logger.error(msg)
+            errors.append(msg)
+
+    if errors:
+        return False, errors
+    
+    logger.info("Report consistency check passed.")
+    return True, []
     # --- 3. MAPE Check (Approximate) ---
     # If report says "Average MAPE: 5.2%", truth should be close.
     
@@ -71,7 +101,7 @@ def validate_report_consistency(report_html: str, metrics: Dict[str, Any]):
             if not (abs(claimed_val - true_avg_pct) < 0.5):
                  msg = f"Report claims Average MAPE {claimed_val}%, but truth is {true_avg_pct:.2f}%."
                  logger.error(msg)
-                 raise ReportConsistencyError(msg)
+                 errors.append(msg)
         except ValueError:
             continue
             
@@ -85,7 +115,7 @@ def validate_report_consistency(report_html: str, metrics: Dict[str, Any]):
             if not (abs(claimed_val - true_median_pct) < 0.5):
                  msg = f"Report claims Median MAPE {claimed_val}%, but truth is {true_median_pct:.2f}%."
                  logger.error(msg)
-                 raise ReportConsistencyError(msg)
+                 errors.append(msg)
         except ValueError:
             continue
 
@@ -96,9 +126,9 @@ def validate_report_consistency(report_html: str, metrics: Dict[str, Any]):
     
     if blocked_events:
         if not any(w in report_text for w in ["blocked", "rejected", "prevented", "stopped"]):
-            msg = "Risk events occurred (portfolio blocked), but report does not mention 'blocked' or 'rejected'."
-            logger.error(msg)
-            raise ReportConsistencyError(msg)
+             msg = "Risk events occurred (blocked/rejected) but report does not mention them."
+             logger.error(msg)
+             errors.append(msg)
 
     # --- 5. Guardrail Status Check ---
     guardrails = metrics.get("guardrails", {})
@@ -108,7 +138,7 @@ def validate_report_consistency(report_html: str, metrics: Dict[str, Any]):
         if "system status: healthy" in report_text:
              msg = "Report claims Healthy status but guardrails are failing."
              logger.error(msg)
-             raise ReportConsistencyError(msg)
+             errors.append(msg)
 
     # --- 6. Code Block / Code Change Check ---
     # The agent is prohibited from suggesting code changes.
@@ -119,8 +149,12 @@ def validate_report_consistency(report_html: str, metrics: Dict[str, Any]):
     for block in code_block_matches:
         block_lower = block.lower()
         if any(keyword in block_lower for keyword in ["def ", "class ", "import ", "from src", "return "]):
-            msg = "Report contains code blocks with code keywords (def/class/import). This violates 'NO CODE CHANGES' rule."
+            msg = "Code block detected with code keywords (def/class/import). This violates 'NO CODE CHANGES' rule."
             logger.error(msg)
-            raise ReportConsistencyError(msg)
+            errors.append(msg)
 
+    if errors:
+        return False, errors
+    
     logger.info("Report consistency check passed.")
+    return True, []

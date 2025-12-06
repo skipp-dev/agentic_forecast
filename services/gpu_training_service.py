@@ -84,6 +84,7 @@ sys.path.append(os.path.dirname(__file__))
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 
 from src.gpu_services import get_gpu_services
+from src.data.types import DataSpec
 from agents.hyperparameter_search_agent import HyperparameterSearchAgent
 from agents.feature_engineer_agent import FeatureEngineerAgent
 
@@ -202,7 +203,7 @@ class GPUTrainingService:
         if training_data is None:
             training_data = self._prepare_training_data(symbol)
 
-        if not training_data or len(training_data['X_train']) < 100:
+        if not training_data or len(training_data.train_df) < 100:
             logger.error(f"Insufficient training data for {symbol}")
             return {'error': 'Insufficient training data', 'training_id': training_id}
 
@@ -236,7 +237,7 @@ class GPUTrainingService:
                     model_type=model_config.get('type', 'unknown'),
                     training_results=results,
                     training_config=config.__dict__ if hasattr(config, '__dict__') else config,
-                    feature_names=training_data.get('feature_names', [])
+                    feature_names=training_data.feature_names or []
                 )
                 results['model_id'] = model_id
             else:
@@ -261,7 +262,7 @@ class GPUTrainingService:
             })
             return {'error': str(e), 'training_id': training_id}
 
-    def _prepare_training_data(self, symbol: str) -> Optional[Dict[str, Any]]:
+    def _prepare_training_data(self, symbol: str) -> Optional[DataSpec]:
         """Prepare training data for a symbol."""
         try:
             # Get raw data
@@ -291,27 +292,24 @@ class GPUTrainingService:
             # Split features and target
             feature_cols = [col for col in feature_data.columns
                           if col not in ['close', 'target']]
-            X = feature_data[feature_cols].values
-            y = feature_data['target'].values
-
+            
             # Train/validation split
-            X_train, X_val, y_train, y_val = train_test_split(
-                X, y, test_size=0.2, shuffle=False
+            train_df, val_df = train_test_split(
+                feature_data, test_size=0.2, shuffle=False
             )
 
-            return {
-                'X_train': X_train,
-                'X_val': X_val,
-                'y_train': y_train,
-                'y_val': y_val,
-                'feature_names': feature_cols
-            }
+            return DataSpec(
+                train_df=train_df,
+                val_df=val_df,
+                target_col='target',
+                feature_names=feature_cols
+            )
 
         except Exception as e:
             logger.error(f"Data preparation failed for {symbol}: {e}")
             return None
 
-    def _train_single_gpu(self, training_data: Dict[str, Any],
+    def _train_single_gpu(self, training_data: DataSpec,
                          model_config: Dict[str, Any], config: TrainingConfig,
                          training_id: str) -> Dict[str, Any]:
         """Train model on single GPU."""
@@ -319,8 +317,14 @@ class GPUTrainingService:
         logger.info(f"Training on device: {device}")
 
         # Prepare data
-        X_train, X_val = training_data['X_train'], training_data['X_val']
-        y_train, y_val = training_data['y_train'], training_data['y_val']
+        feature_cols = training_data.feature_names
+        target_col = training_data.target_col
+        
+        X_train = training_data.train_df[feature_cols].values
+        y_train = training_data.train_df[target_col].values
+        
+        X_val = training_data.val_df[feature_cols].values
+        y_val = training_data.val_df[target_col].values
 
         # Create datasets
         train_dataset = GPUDataset(X_train, y_train, device)
@@ -458,7 +462,7 @@ class GPUTrainingService:
             'epochs_trained': len(training_metrics)
         }
 
-    def _train_distributed(self, training_data: Dict[str, Any],
+    def _train_distributed(self, training_data: DataSpec,
                           model_config: Dict[str, Any], config: TrainingConfig,
                           training_id: str) -> Dict[str, Any]:
         """Train model with distributed GPUs."""
@@ -472,8 +476,8 @@ class GPUTrainingService:
             return self._train_single_gpu(training_data, model_config, config, training_id)
 
         # Split data across GPUs
-        X_train, y_train = training_data['X_train'], training_data['y_train']
-        split_size = len(X_train) // len(self.gpu_devices)
+        train_df = training_data.train_df
+        split_size = len(train_df) // len(self.gpu_devices)
 
         gpu_results = []
 
@@ -481,15 +485,14 @@ class GPUTrainingService:
             futures = []
             for i, gpu_id in enumerate(self.gpu_devices):
                 start_idx = i * split_size
-                end_idx = (i + 1) * split_size if i < len(self.gpu_devices) - 1 else len(X_train)
+                end_idx = (i + 1) * split_size if i < len(self.gpu_devices) - 1 else len(train_df)
 
-                gpu_data = {
-                    'X_train': X_train[start_idx:end_idx],
-                    'X_val': training_data['X_val'],
-                    'y_train': y_train[start_idx:end_idx],
-                    'y_val': training_data['y_val'],
-                    'feature_names': training_data['feature_names']
-                }
+                gpu_data = DataSpec(
+                    train_df=train_df.iloc[start_idx:end_idx],
+                    val_df=training_data.val_df,
+                    target_col=training_data.target_col,
+                    feature_names=training_data.feature_names
+                )
 
                 gpu_config = TrainingConfig(**vars(config))
                 gpu_config.use_gpu = True

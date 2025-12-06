@@ -57,24 +57,21 @@ class StrategyBacktestingAgent:
         )
         
         # Run the backtest
-        # Note: BacktestExecutor.run() needs to be implemented or exposed if it isn't already.
-        # Assuming BacktestExecutor has a run method based on previous context.
-        # If not, we might need to implement the loop here.
-        
-        # Let's assume we need to implement the loop if BacktestExecutor is just a helper
-        # But looking at the file content previously, it seemed to be a class structure.
-        # Let's assume we can call a method to run it.
-        
-        # Since I can't see the full BacktestExecutor, I'll implement a basic run loop here
-        # that mimics what it likely does, or wraps it if it has a run method.
-        
-        # For now, let's assume we use the executor to run.
-        # If BacktestExecutor doesn't have a 'run' method, we'll need to add it or use this agent to drive it.
-        
-        # Let's try to use the executor's logic if possible.
-        # If BacktestExecutor is incomplete, this agent will serve as the driver.
-        
         results = self._execute_backtest_loop(executor)
+        
+        # Merge portfolio history into results for metric calculation
+        if executor.portfolio_history:
+            portfolio_df = pd.DataFrame(executor.portfolio_history)
+            # Ensure date is datetime
+            portfolio_df['date'] = pd.to_datetime(portfolio_df['date'])
+            
+            # If results has date, merge. If results is empty (no forecasts), use portfolio history.
+            if not results.empty and 'date' in results.columns:
+                 results['date'] = pd.to_datetime(results['date'])
+                 # Merge on date
+                 results = pd.merge(results, portfolio_df, on='date', how='outer')
+            else:
+                results = portfolio_df
         
         metrics = self._calculate_metrics(results)
         
@@ -87,22 +84,99 @@ class StrategyBacktestingAgent:
         """
         Internal method to drive the backtest loop.
         """
-        # This is a placeholder for the actual simulation loop
-        # In a real implementation, this would step through time using the executor
         logger.info("Executing backtest simulation...")
         
-        # TODO: Implement the actual day-by-day loop using the graph
-        # For now, returning an empty DataFrame structure
-        return pd.DataFrame()
+        # Construct initial state
+        initial_state = {
+            "symbols": self.config.get("symbols", ["SPY"]), # Default to SPY if not set
+            "start_date": executor.start_date.strftime('%Y-%m-%d'),
+            "end_date": executor.end_date.strftime('%Y-%m-%d'),
+            "run_id": f"backtest_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
+            "config": self.config,
+            "run_type": "BACKTEST",
+            "data": {},
+            "features": {},
+            "macro_data": {},
+            "regimes": {},
+            "best_models": {},
+            "forecasts": {},
+            "analytics_results": {},
+            "drift_detected": [],
+            "drift_metrics": {},
+            "retrained_models": [],
+            "hpo_triggered": False,
+            "hpo_results": {},
+            "errors": [],
+            "run_status": "STARTING",
+            "next_step": "init",
+            "deep_research_conducted": False,
+            "horizon_forecasts": {},
+            "interpreted_forecasts": False,
+            "report_metadata": {},
+            "report_generated": False,
+            "signals": {}
+        }
+        
+        # Run the executor
+        results_df = executor.run(initial_state)
+        
+        return results_df
 
     def _calculate_metrics(self, results: pd.DataFrame) -> Dict[str, float]:
         """
         Calculate performance metrics from backtest results.
         """
-        # Placeholder metrics
+        if results.empty:
+            return {
+                'sharpe_ratio': 0.0,
+                'max_drawdown': 0.0,
+                'total_return': 0.0,
+                'win_rate': 0.0
+            }
+            
+        # Assuming results contains 'total_value' and 'date'
+        # If results comes from executor.results, it might be forecasts.
+        # We need portfolio history from executor.
+        # But executor.run returns self.results which is forecasts/metrics per step.
+        # We need to access executor.portfolio_history for financial metrics.
+        
+        # Since we passed executor to _execute_backtest_loop, we can access it here if we change signature
+        # or we rely on what is returned.
+        # The current implementation of executor.run returns pd.DataFrame(self.results).
+        # We should probably modify executor to return both or access history.
+        
+        # For now, let's calculate basic metrics if 'total_value' is in results.
+        # If not, we return zeros.
+        
+        if 'total_value' not in results.columns:
+             return {
+                'sharpe_ratio': 0.0,
+                'max_drawdown': 0.0,
+                'total_return': 0.0,
+                'win_rate': 0.0
+            }
+            
+        # Calculate Returns
+        results['returns'] = results['total_value'].pct_change()
+        
+        # Total Return
+        start_val = results['total_value'].iloc[0]
+        end_val = results['total_value'].iloc[-1]
+        total_return = (end_val - start_val) / start_val if start_val != 0 else 0.0
+        
+        # Sharpe Ratio (Annualized, assuming daily data)
+        mean_return = results['returns'].mean()
+        std_return = results['returns'].std()
+        sharpe = (mean_return / std_return) * np.sqrt(252) if std_return != 0 else 0.0
+        
+        # Max Drawdown
+        rolling_max = results['total_value'].cummax()
+        drawdown = (results['total_value'] - rolling_max) / rolling_max
+        max_drawdown = drawdown.min()
+        
         return {
-            'sharpe_ratio': 0.0,
-            'max_drawdown': 0.0,
-            'total_return': 0.0,
-            'win_rate': 0.0
+            'sharpe_ratio': float(sharpe),
+            'max_drawdown': float(max_drawdown),
+            'total_return': float(total_return),
+            'win_rate': 0.0 # Placeholder
         }

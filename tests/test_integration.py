@@ -81,9 +81,20 @@ from src.gpu_services import get_gpu_services
 logger = logging.getLogger(__name__)
 
 # Mock model for testing that can be pickled
-class MockModel:
+class MockModel(torch.nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.linear = torch.nn.Linear(1, 1)
+
+    def forward(self, x):
+        return self.linear(x)
+
+    def predict(self, X):
+        import numpy as np
+        return np.zeros(len(X))
+
     def state_dict(self):
-        return {'weight': torch.tensor([1.0])}
+        return {'linear.weight': torch.tensor([[1.0]]), 'linear.bias': torch.tensor([0.0])}
 
 class TestIBForecastIntegration(unittest.TestCase):
     """Integration tests for the complete IB Forecast system."""
@@ -96,6 +107,9 @@ class TestIBForecastIntegration(unittest.TestCase):
         self.metrics_db_path = os.path.join(self.temp_dir, 'metrics.db')
         self.model_registry_path = os.path.join(self.temp_dir, 'model_registry')
 
+        # Create mock market data
+        self.mock_data = self._create_mock_market_data()
+
         # Initialize components
         self.gpu_services = get_gpu_services()
         self.feature_store = TimeSeriesFeatureStore(self.feature_store_path)
@@ -106,6 +120,7 @@ class TestIBForecastIntegration(unittest.TestCase):
         self.mock_pipeline = Mock()
         self.mock_pipeline.train_cnn_lstm.return_value = (Mock(), {'test_metrics': {'mae': 0.1}})
         self.mock_pipeline.train_ensemble.return_value = (Mock(), {'test_mae': 0.1})
+        self.mock_pipeline.fetch_stock_data.return_value = self.mock_data
         self.hyperparameter_agent = HyperparameterSearchAgent(data_pipeline=self.mock_pipeline)
         self.drift_monitor = DriftMonitorAgent()
         self.feature_engineer = FeatureEngineerAgent()
@@ -114,11 +129,9 @@ class TestIBForecastIntegration(unittest.TestCase):
         # Initialize services
         self.training_service = GPUTrainingService(self.gpu_services, self.model_registry)
         self.inference_service = InferenceService(
-            self.model_registry, self.feature_engineer, self.gpu_services
+            gpu_services=self.gpu_services,
+            model_registry=self.model_registry
         )
-
-        # Create mock market data
-        self.mock_data = self._create_mock_market_data()
 
     def tearDown(self):
         """Clean up test environment."""
@@ -225,8 +238,12 @@ class TestIBForecastIntegration(unittest.TestCase):
         # Get metadata
         metadata = self.model_registry.get_model_metadata(model_id)
         self.assertIsNotNone(metadata)
-        self.assertEqual(metadata.symbol, 'AAPL')
-        self.assertEqual(metadata.model_type, 'test')
+        if isinstance(metadata, dict):
+            self.assertEqual(metadata.get('symbol'), 'AAPL')
+            self.assertEqual(metadata.get('model_type'), 'test')
+        else:
+            self.assertEqual(metadata.symbol, 'AAPL')
+            self.assertEqual(metadata.model_type, 'test')
 
     def test_feature_engineer_agent_integration(self):
         """Test feature engineer agent integration."""
@@ -339,7 +356,26 @@ class TestIBForecastIntegration(unittest.TestCase):
 
         # Create mock request
         from services.inference_service import InferenceRequest, InferenceResult
-        request = InferenceRequest(symbol=symbol)
+        # Pass training data for inference context
+        # training_data is a dict with X_train as numpy array
+        x_data = None
+        if training_data:
+            if isinstance(training_data, dict):
+                x_data = training_data.get('X_train')
+            elif hasattr(training_data, 'train_df'):
+                # Extract features from DataSpec
+                df = training_data.train_df
+                cols = training_data.feature_names or training_data.feature_cols or training_data.exog_cols
+                if cols:
+                    # Ensure target is not in cols
+                    final_cols = [c for c in cols if c != training_data.target_col]
+                    x_data = df[final_cols].iloc[-1:].values
+                else:
+                    # Fallback: drop target and date
+                    drop_cols = [training_data.target_col, training_data.date_col, 'unique_id', 'ds', 'y']
+                    x_data = df.drop(columns=[c for c in drop_cols if c in df.columns], errors='ignore').iloc[-1:].values
+        
+        request = InferenceRequest(symbol=symbol, data=x_data)
 
         # Test async inference
         async def run_inference():
@@ -417,7 +453,24 @@ class TestIBForecastIntegration(unittest.TestCase):
 
             # 6. Test inference
             from services.inference_service import InferenceRequest, InferenceResult
-            request = InferenceRequest(symbol=symbol)
+            x_data = None
+            if training_data:
+                if isinstance(training_data, dict):
+                    x_data = training_data.get('X_train')
+                elif hasattr(training_data, 'train_df'):
+                    # Extract features from DataSpec
+                    df = training_data.train_df
+                    cols = training_data.feature_names or training_data.feature_cols or training_data.exog_cols
+                    if cols:
+                        # Ensure target is not in cols
+                        final_cols = [c for c in cols if c != training_data.target_col]
+                        x_data = df[final_cols].iloc[-1:].values
+                    else:
+                        # Fallback: drop target and date
+                        drop_cols = [training_data.target_col, training_data.date_col, 'unique_id', 'ds', 'y']
+                        x_data = df.drop(columns=[c for c in drop_cols if c in df.columns], errors='ignore').iloc[-1:].values
+
+            request = InferenceRequest(symbol=symbol, data=x_data)
 
             async def test_inference():
                 result = await self.inference_service.predict_async(request)
@@ -444,12 +497,12 @@ class TestIBForecastIntegration(unittest.TestCase):
         try:
             # Test hyperparameter search
             search_results = self.hyperparameter_agent.run_search(
-                symbol=symbol, model_type='cnn_lstm', max_trials=2
+                symbol=symbol, model_type='NHITS', max_trials=2
             )
             self.assertIsInstance(search_results, dict)
 
             # Test drift monitoring
-            drift_results = self.drift_monitor.monitor_performance(symbol)
+            drift_results = self.drift_monitor.comprehensive_drift_check(symbol)
             self.assertIsInstance(drift_results, dict)
 
             # Test feature engineering

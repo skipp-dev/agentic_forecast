@@ -40,16 +40,27 @@ class BacktestExecutor:
         self.portfolio_history = []
         
         # Initialize Backtest Broker
-        # We use a separate file to avoid corrupting the production portfolio
+        # We use a specific file name to trigger 'is_backtest=True' in PaperBroker
         self.backtest_broker_file = "data/backtest_portfolio.json"
-        if os.path.exists(self.backtest_broker_file):
-            os.remove(self.backtest_broker_file)
-            
+        
         # Initialize Cost Model (e.g., 5bps slippage, $0.005/share commission)
         self.cost_model = LinearSlippageModel(slippage_bps=5.0, commission_per_share=0.005)
             
         self.broker = PaperBroker(state_file=self.backtest_broker_file, initial_cash=initial_cash, cost_model=self.cost_model)
-        logger.info(f"Initialized Backtest Broker with ${initial_cash:,.2f} and LinearSlippageModel")
+        
+        # RESET BACKTEST STATE
+        # Clear previous backtest data from DB to ensure a fresh run
+        self.broker.db_service.clear_backtest_data()
+        
+        # Reset in-memory portfolio
+        self.broker.portfolio = {
+            "cash": initial_cash,
+            "positions": {},
+            "history": []
+        }
+        self.broker._save_state()
+        
+        logger.info(f"Initialized Backtest Broker with ${initial_cash:,.2f} and cleared previous backtest data.")
 
     def run(self, initial_state: Dict[str, Any]) -> pd.DataFrame:
         """
@@ -107,15 +118,30 @@ class BacktestExecutor:
         """Capture the current value of the portfolio."""
         cash = self.broker.get_cash()
         positions = self.broker.get_positions()
-        # Note: get_portfolio_value() in PaperBroker currently returns cash only
-        # We should calculate equity if possible, but we need prices.
-        # For now, we log what we have.
+        
+        # Calculate Equity
+        equity = 0.0
+        for symbol, qty in positions.items():
+            # Get price for this date
+            # We use the DB service to fetch the close price for the specific date
+            df = self.broker.db_service.get_market_data(symbol, start_date=date, end_date=date)
+            if not df.empty:
+                price = df.iloc[0]['close'] 
+                equity += qty * price
+            else:
+                # If no price found for exact date (e.g. weekend), try previous days?
+                # For now, we might miss it. 
+                # Ideally, get_market_data should handle 'asof' logic or we query a range.
+                pass
+        
+        total_value = cash + equity
         
         record = {
             'date': date,
             'cash': cash,
-            'positions_count': len(positions),
-            'total_value': self.broker.get_portfolio_value() # Approximation
+            'equity': equity,
+            'total_value': total_value,
+            'positions_count': len(positions)
         }
         self.portfolio_history.append(record)
 

@@ -44,6 +44,7 @@ from src.nodes.strategy_nodes import strategy_node
 from src.nodes.portfolio_nodes import portfolio_construction_node
 from src.nodes.trade_execution_nodes import trade_execution_node
 from src.agents.orchestrator_agent import OrchestratorAgent
+from src.core.checkpointer import get_checkpointer
 
 # Set up logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -245,17 +246,26 @@ def main():
 
         # Define Routing Logic
         def route_after_features(state: PipelineGraphState):
+            # Dynamic routing based on Orchestrator decision
             decision = orchestrator.coordinate_workflow(state)
             logger.info(f"Orchestrator decision after features: {decision}")
+            
             if decision == "hpo":
                 return "hpo"
+            elif decision == "skip_to_end": # Example of dynamic skip
+                logger.warning("Orchestrator decided to skip workflow (e.g. data issues).")
+                return END
             return "forecasting"
 
         def route_after_analytics(state: PipelineGraphState):
             decision = orchestrator.coordinate_workflow(state)
             logger.info(f"Orchestrator decision after analytics: {decision}")
+            
             if decision == "retrain":
-                return "strategy"
+                # Could route to retraining node if implemented as a loop
+                # For now, we don't have a direct back-edge to retraining in this DAG structure
+                # but we can flag it for the next run or use a specific node.
+                return "strategy" 
             elif decision == "end":
                 return END
             return "strategy" # Default continue to strategy node
@@ -290,7 +300,8 @@ def main():
             route_after_features,
             {
                 "hpo": "hpo",
-                "forecasting": "forecasting"
+                "forecasting": "forecasting",
+                END: END
             }
         )
         
@@ -314,8 +325,12 @@ def main():
         workflow.add_edge("retraining", "reporting")
         workflow.add_edge("reporting", END)
 
-        # Compile
-        app = workflow.compile()
+        # Initialize Checkpointer
+        # Use SQLite for local persistence, allowing resume on crash
+        checkpointer = get_checkpointer(persistence_type="sqlite", db_path="data/checkpoints.db")
+
+        # Compile with checkpointer
+        app = workflow.compile(checkpointer=checkpointer)
 
         # Initial state
         initial_state = PipelineGraphState(
@@ -339,7 +354,19 @@ def main():
 
         # Run
         print("Starting Graph Execution...")
-        final_state = app.invoke(initial_state)
+        
+        # Use a thread_id to identify this specific workflow run for checkpointing
+        # In production, this would be a unique ID for the day/job
+        thread_id = ctx.run_id
+        config_run = {"configurable": {"thread_id": thread_id}}
+        
+        # Check if we have a checkpoint to resume from
+        # Note: app.invoke doesn't automatically resume in the same way as stream/step
+        # but passing the same thread_id allows access to previous state.
+        # For true resume, we might need to inspect state history, but for now
+        # we just ensure state is persisted.
+        
+        final_state = app.invoke(initial_state, config=config_run)
         print("Graph Execution Completed.")
         
     elif args.task == "llm_analytics_only":

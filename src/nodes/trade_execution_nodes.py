@@ -39,3 +39,6 @@ def trade_execution_node(state: PipelineGraphState) -> PipelineGraphState:
     logger.info(f"Execution Completed. {len(results)} orders processed.")
     
     return state
+
+
+from .execution_nodes import forecasting_node

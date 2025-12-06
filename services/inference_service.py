@@ -9,7 +9,7 @@ import os
 import sys
 import numpy as np
 import pandas as pd
-from typing import Dict, List, Any, Optional, Tuple
+from typing import Dict, List, Any, Optional, Tuple, Union
 import logging
 from datetime import datetime
 import torch
@@ -36,6 +36,7 @@ class InferenceRequest:
     symbol: str
     model_id: Optional[str] = None
     features: Optional[Dict[str, Any]] = None
+    data: Optional[Union[pd.DataFrame, np.ndarray]] = None
     timestamp: Optional[datetime] = None
 
 @dataclass
@@ -114,7 +115,16 @@ class InferenceService:
 
         try:
             # Get or prepare features
-            if request.features is None:
+            if request.data is not None:
+                if isinstance(request.data, pd.DataFrame):
+                    features_df = request.data
+                else:
+                    # If numpy array, we can't easily map to feature names without more info.
+                    # For now, assume it matches the model's expected input order if we can't do better,
+                    # but we need the model first to know that.
+                    # Let's wrap it in a DF with dummy columns if needed, or handle later.
+                    features_df = pd.DataFrame(request.data)
+            elif request.features is None:
                 features_df = await self._prepare_features_async(request.symbol)
             else:
                 features_df = pd.DataFrame([request.features])
@@ -128,15 +138,20 @@ class InferenceService:
 
             # Prepare input
             feature_names = metadata.feature_names
-            missing_features = set(feature_names) - set(features_df.columns)
-            if missing_features:
-                logger.warning(f"Missing features for {request.symbol}: {missing_features}")
+            
+            # Check if we have integer columns (from numpy array input) and matching count
+            if len(features_df.columns) > 0 and all(isinstance(c, int) for c in features_df.columns) and len(features_df.columns) == len(feature_names):
+                input_features = features_df.values
+            else:
+                missing_features = set(feature_names) - set(features_df.columns)
+                if missing_features:
+                    logger.warning(f"Missing features for {request.symbol}: {missing_features}")
 
-            # Fill missing features with 0
-            for feature in missing_features:
-                features_df[feature] = 0.0
+                # Fill missing features with 0
+                for feature in missing_features:
+                    features_df[feature] = 0.0
 
-            input_features = features_df[feature_names].values
+                input_features = features_df[feature_names].values
 
             # GPU inference
             if self.device == 'cuda' and hasattr(model, 'to'):

@@ -28,6 +28,7 @@ from src.gpu_services import get_gpu_services
 from src.data_pipeline import DataPipeline
 from src.services.model_registry_service import ModelRegistryService
 from src.services.inference_service import InferenceService
+from src.monitoring.metrics import DRIFT_MONITOR_RUNS, DRIFT_FLAGS_RAISED, DRIFT_SCORE, SYSTEM_ERRORS
 
 logger = logging.getLogger(__name__)
 
@@ -88,34 +89,57 @@ class DriftMonitorAgent(MonitoringAgent):
             Comprehensive drift analysis results
         """
         logger.info(f"Running comprehensive drift check for {symbol}")
+        DRIFT_MONITOR_RUNS.labels(symbol=symbol).inc()
 
-        results = {
-            'symbol': symbol,
-            'timestamp': datetime.now().isoformat(),
-            'performance_drift': self._check_performance_drift(symbol),
-            'data_drift': self._check_data_drift(symbol),
-            'spectral_drift': self._check_spectral_drift(symbol),
-            'regime_change': False,
-            'overall_drift_score': 0.0,
-            'recommendations': []
-        }
+        try:
+            results = {
+                'symbol': symbol,
+                'timestamp': datetime.now().isoformat(),
+                'performance_drift': self._check_performance_drift(symbol),
+                'data_drift': self._check_data_drift(symbol),
+                'spectral_drift': self._check_spectral_drift(symbol),
+                'regime_change': False,
+                'overall_drift_score': 0.0,
+                'recommendations': []
+            }
 
-        # Calculate overall drift score
-        drift_scores = [
-            results['performance_drift']['drift_score'],
-            results['data_drift']['drift_score'],
-            results['spectral_drift']['drift_score']
-        ]
+            # Calculate overall drift score
+            drift_scores = [
+                results['performance_drift']['drift_score'],
+                results['data_drift']['drift_score'],
+                results['spectral_drift']['drift_score']
+            ]
 
-        results['overall_drift_score'] = np.mean(drift_scores)
-        results['regime_change'] = results['overall_drift_score'] > self.thresholds['regime_change']
+            results['overall_drift_score'] = np.mean(drift_scores)
+            DRIFT_SCORE.labels(symbol=symbol).set(results['overall_drift_score'])
+            
+            results['regime_change'] = results['overall_drift_score'] > self.thresholds['regime_change']
 
-        # Generate recommendations
-        results['recommendations'] = self._generate_recommendations(results)
+            if results['regime_change']:
+                DRIFT_FLAGS_RAISED.labels(symbol=symbol, drift_type='regime_change').inc()
 
-        logger.info(f"Drift analysis complete for {symbol}: score={results['overall_drift_score']:.3f}")
+            # Generate recommendations
+            results['recommendations'] = self._generate_recommendations(results)
 
-        return results
+            logger.info(f"Drift analysis complete for {symbol}: score={results['overall_drift_score']:.3f}")
+
+            return results
+            
+        except Exception as e:
+            logger.error(f"Drift Monitor failed for {symbol}: {e}")
+            SYSTEM_ERRORS.labels(component='drift_monitor').inc()
+            # Guardrail: Return safe default instead of crashing or returning None
+            return {
+                'symbol': symbol,
+                'timestamp': datetime.now().isoformat(),
+                'performance_drift': {'drift_detected': False, 'drift_score': 0.0},
+                'data_drift': {'drift_detected': False, 'drift_score': 0.0},
+                'spectral_drift': {'drift_detected': False, 'drift_score': 0.0},
+                'regime_change': False,
+                'overall_drift_score': 0.0,
+                'recommendations': [],
+                'error': str(e)
+            }
 
     def _check_performance_drift(self, symbol: str) -> Dict[str, Any]:
         """
@@ -460,7 +484,7 @@ class DriftMonitorAgent(MonitoringAgent):
                     horizon=horizon
                 )
                 
-                if result['status'] == 'success':
+                if result['status'] in ['success', 'success_fallback']:
                     preds = result['predictions']
                     if isinstance(preds, pd.DataFrame):
                         # Find prediction column

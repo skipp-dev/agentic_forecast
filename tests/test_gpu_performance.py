@@ -18,6 +18,7 @@ from typing import Dict, List, Any, Optional
 import logging
 from datetime import datetime, timedelta
 import gc
+from src.data.types import DataSpec
 import pytest
 
 # Mock talib before importing agents
@@ -556,30 +557,24 @@ class TestGPUPerformanceTuning(unittest.TestCase):
         except Exception:
             return 0.5  # Default moderate fragmentation
 
-    def _prepare_training_data(self, features: pd.DataFrame) -> Optional[Dict[str, Any]]:
+    def _prepare_training_data(self, features: pd.DataFrame) -> Optional[DataSpec]:
         """Prepare training data from features."""
         try:
-            target = features["close"].shift(-1).dropna()
-            feature_cols = [col for col in features.columns if col != "close"]
-            feature_data = features[feature_cols].dropna()
-
-            common_index = feature_data.index.intersection(target.index)
-            X = feature_data.loc[common_index].values
-            y = target.loc[common_index].values
-
-            if len(X) < 50:
+            if len(features) < 50:
                 return None
 
-            from sklearn.model_selection import train_test_split
-            X_train, X_val, y_train, y_val = train_test_split(X, y, test_size=0.2, shuffle=False)
+            train_size = int(len(features) * 0.8)
+            train_df = features.iloc[:train_size]
+            val_df = features.iloc[train_size:]
+            
+            feature_cols = [col for col in features.columns if col != "close"]
 
-            return {
-                "X_train": X_train,
-                "X_val": X_val,
-                "y_train": y_train,
-                "y_val": y_val,
-                "feature_names": feature_cols
-            }
+            return DataSpec(
+                train_df=train_df,
+                val_df=val_df,
+                target_col="close",
+                feature_names=feature_cols
+            )
 
         except Exception as e:
             logger.warning(f"Training data preparation failed: {e}")

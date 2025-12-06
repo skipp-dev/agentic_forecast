@@ -1,9 +1,13 @@
-from typing import TypedDict, List, Dict, Any, Optional
+from typing import TypedDict, List, Dict, Any, Optional, Union
 import pandas as pd
 
 class PipelineGraphState(TypedDict):
     """
     State for the Agentic Forecast Pipeline Graph.
+    
+    Optimization Note:
+    Large artifacts (DataFrames) should be stored as file paths (str) pointing to parquet files
+    managed by StateManager, rather than raw DataFrames, to reduce memory overhead.
     """
     symbols: List[str]
     start_date: str
@@ -12,17 +16,17 @@ class PipelineGraphState(TypedDict):
     config: Dict[str, Any]
     run_type: str
     
-    # Data artifacts
-    data: Dict[str, pd.DataFrame]  # Map symbol -> DataFrame (raw/processed)
-    features: Dict[str, pd.DataFrame] # Map symbol -> DataFrame with features
-    macro_data: Dict[str, Any] # Macro economic data
-    regimes: Dict[str, Any] # Market regimes
+    # Data artifacts (Map symbol -> path_to_parquet or DataFrame)
+    data: Dict[str, Union[str, pd.DataFrame]] 
+    features: Dict[str, Union[str, pd.DataFrame]]
+    macro_data: Dict[str, Any] 
+    regimes: Dict[str, Any] 
     
     # Model artifacts
-    best_models: Dict[str, Dict[str, Any]] # Map symbol -> model_config/params
+    best_models: Dict[str, Dict[str, Any]] 
     
     # Forecast artifacts
-    forecasts: Dict[str, pd.DataFrame] # Map symbol -> forecast DataFrame
+    forecasts: Dict[str, Union[str, pd.DataFrame]]
     
     # Analytics artifacts
     analytics_results: Dict[str, Dict[str, Any]] # Map symbol -> analytics dict (MAPE, etc.)

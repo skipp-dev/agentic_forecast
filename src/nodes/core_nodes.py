@@ -41,6 +41,13 @@ def data_ingestion_node(state: PipelineGraphState) -> PipelineGraphState:
         state['data'] = {}
         return state
     
+    # Cold Start Gating Configuration
+    MIN_BARS_BASELINE = 60
+    MIN_BARS_DEEP = 250
+    MIN_BARS_MACRO = 180
+    
+    symbol_status = {}
+
     for symbol in symbols:
         try:
             logger.info(f"Fetching data for {symbol}...")
@@ -55,20 +62,35 @@ def data_ingestion_node(state: PipelineGraphState) -> PipelineGraphState:
                     df.index = pd.to_datetime(df.index)
                 
                 # Filter data up to cutoff (inclusive)
-                # We assume cutoff_date is the "current date" of the simulation.
-                # The model should only see data up to this date.
                 df = df[df.index <= pd.Timestamp(cutoff_date)]
                 logger.info(f"Filtered data for {symbol} up to {cutoff_date}. Rows: {len(df)}")
 
             if df is not None and not df.empty:
-                data_map[symbol] = df
-                logger.info(f"Fetched {len(df)} rows for {symbol}")
+                history_len = len(df)
+                
+                # Classify Symbol
+                if history_len < MIN_BARS_BASELINE:
+                    status = "UNTRADEABLE"
+                    logger.warning(f"{symbol}: Insufficient history ({history_len} < {MIN_BARS_BASELINE}). Marking UNTRADEABLE.")
+                elif history_len < MIN_BARS_DEEP:
+                    status = "BASELINE_ONLY"
+                    logger.info(f"{symbol}: Limited history ({history_len}). Marking BASELINE_ONLY.")
+                else:
+                    status = "FULL_STACK"
+                    logger.info(f"{symbol}: Sufficient history ({history_len}). Marking FULL_STACK.")
+                
+                symbol_status[symbol] = status
+                
+                if status != "UNTRADEABLE":
+                    data_map[symbol] = df
+                    logger.info(f"Fetched {len(df)} rows for {symbol} ({status})")
             else:
                 logger.warning(f"No data found for {symbol}")
         except Exception as e:
             logger.error(f"Error fetching data for {symbol}: {e}")
             
     state['data'] = data_map
+    state['symbol_status'] = symbol_status
     return state
 
 def feature_engineering_node(state: PipelineGraphState) -> PipelineGraphState:
@@ -270,7 +292,7 @@ def forecasting_node(state: PipelineGraphState) -> PipelineGraphState:
                 )
                 
                 pred_future = None
-                if pred_res['status'] == 'success':
+                if pred_res['status'] in ['success', 'success_fallback']:
                     preds = pred_res['predictions']
                     
                     # Handle list of dicts (JSON serialization from service)

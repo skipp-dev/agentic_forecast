@@ -4,8 +4,10 @@ import pandas as pd
 from .core.run_context import RunContext, RunType
 from .graphs.main_graph import create_main_graph
 from .graphs.state import GraphState
+from src.monitoring.tracing import setup_tracing
 
 logger = logging.getLogger(__name__)
+tracer = setup_tracing("pipeline_orchestrator")
 
 def build_initial_state(symbols, config, ctx: RunContext):
     """Build the initial GraphState with run_type from context"""
@@ -42,10 +44,15 @@ def build_initial_state(symbols, config, ctx: RunContext):
 
 def run_pipeline(ctx: RunContext, symbols: list, config: dict):
     """Common pipeline runner"""
-    logger.info(f"Initializing pipeline for {ctx.run_type.value} run (ID: {ctx.run_id})")
-    
-    # Setup environment based on run type
-    if ctx.run_type == RunType.BACKTEST:
+    with tracer.start_as_current_span("run_pipeline") as span:
+        span.set_attribute("run_id", ctx.run_id)
+        span.set_attribute("run_type", ctx.run_type.value)
+        span.set_attribute("symbol_count", len(symbols))
+        
+        logger.info(f"Initializing pipeline for {ctx.run_type.value} run (ID: {ctx.run_id})")
+        
+        # Setup environment based on run type
+        if ctx.run_type == RunType.BACKTEST:
         os.environ['SKIP_NEURALFORECAST'] = 'true'
         os.environ['RUN_TYPE'] = 'BACKTEST'
         logger.info("BACKTEST mode: Skipping NeuralForecast imports")
