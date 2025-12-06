@@ -103,58 +103,56 @@ class OrchestratorAgent(SupervisorAgent):
                     logger.error(f"Critical error detected: {analysis['critical_error']}. Terminating workflow.")
                     SYSTEM_ERRORS.labels(component='orchestrator').inc()
                     span.set_status(trace.Status(trace.StatusCode.ERROR, analysis['critical_error']))
+                    return "end"
+
+                # Regime Change Handling
+                if analysis.get('regime_change_detected'):
+                    logger.info("Regime change detected. Triggering strategy update/HPO.")
+                    if not state.get('hpo_triggered') and not state.get('hpo_results'):
+                        state['hpo_triggered'] = True
+                        return "hpo"
+
+                # High Drift Handling
+                if analysis.get('drift_severity') == 'high':
+                    logger.info("High drift detected. Checking circuit breakers before retraining.")
+                    
+                    # Circuit Breaker Logic
+                    now = datetime.now()
+                    time_since_last = (now - self.last_retrain_time).total_seconds() / 60.0
+                    
+                    if self.retrain_count >= self.MAX_RETRAINS_PER_HOUR:
+                        logger.error(f"CIRCUIT BREAKER TRIPPED: Max retrains ({self.MAX_RETRAINS_PER_HOUR}) exceeded. Falling back to baseline.")
+                        state['error'] = "Circuit Breaker: Max retrains exceeded"
+                        return "fallback_baseline" # Assume this node exists or will be handled
+                    
+                    if time_since_last < self.MIN_RETRAIN_INTERVAL_MINUTES:
+                        logger.warning(f"CIRCUIT BREAKER: Retrain requested too soon ({time_since_last:.1f} min < {self.MIN_RETRAIN_INTERVAL_MINUTES} min). Skipping.")
+                        return "skip_retrain"
+
+                    if not state.get('retrained_models'):
+                        self.retrain_count += 1
+                        self.last_retrain_time = now
+                        return "retrain"
+                
+                # Performance Drop Handling
+                if analysis.get('performance_drop'):
+                    logger.info("Performance drop detected. Suggesting HPO.")
+                    if not state.get('hpo_triggered') and not state.get('hpo_results'):
+                        state['hpo_triggered'] = True
+                        return "hpo"
+
+                # Enhanced decision making (calls parent logic for standard flow)
+                next_action = self._advanced_decision_making(state)
+
+                # GPU resource optimization
+                self._optimize_gpu_resources(next_action, state)
+
+                return next_action
+            
+            except Exception as e:
+                logger.error(f"Orchestrator error: {e}")
+                span.set_status(trace.Status(trace.StatusCode.ERROR, str(e)))
                 return "end"
-
-            # Regime Change Handling
-            if analysis.get('regime_change_detected'):
-                logger.info("Regime change detected. Triggering strategy update/HPO.")
-                if not state.get('hpo_triggered') and not state.get('hpo_results'):
-                     state['hpo_triggered'] = True
-                     return "hpo"
-
-            # High Drift Handling
-            if analysis.get('drift_severity') == 'high':
-                logger.info("High drift detected. Checking circuit breakers before retraining.")
-                
-                # Circuit Breaker Logic
-                now = datetime.now()
-                time_since_last = (now - self.last_retrain_time).total_seconds() / 60.0
-                
-                if self.retrain_count >= self.MAX_RETRAINS_PER_HOUR:
-                    logger.error(f"CIRCUIT BREAKER TRIPPED: Max retrains ({self.MAX_RETRAINS_PER_HOUR}) exceeded. Falling back to baseline.")
-                    state['error'] = "Circuit Breaker: Max retrains exceeded"
-                    return "fallback_baseline" # Assume this node exists or will be handled
-                
-                if time_since_last < self.MIN_RETRAIN_INTERVAL_MINUTES:
-                    logger.warning(f"CIRCUIT BREAKER: Retrain requested too soon ({time_since_last:.1f} min < {self.MIN_RETRAIN_INTERVAL_MINUTES} min). Skipping.")
-                    return "skip_retrain"
-
-                if not state.get('retrained_models'):
-                    self.retrain_count += 1
-                    self.last_retrain_time = now
-                    return "retrain"
-                
-            # Performance Drop Handling
-            if analysis.get('performance_drop'):
-                logger.info("Performance drop detected. Suggesting HPO.")
-                if not state.get('hpo_triggered') and not state.get('hpo_results'):
-                     state['hpo_triggered'] = True
-                     return "hpo"
-
-            # Enhanced decision making (calls parent logic for standard flow)
-            next_action = self._advanced_decision_making(state)
-
-            # GPU resource optimization
-            self._optimize_gpu_resources(next_action, state)
-
-            return next_action
-        except Exception as e:
-            logger.error(f"Orchestrator failed: {e}")
-            SYSTEM_ERRORS.labels(component='orchestrator').inc()
-            return "end"
-        if analysis.get('drift_severity') == 'high':
-            logger.info("High drift detected. Mandating retraining.")
-            if not state.get('retrained_models'):
                 return "retrain"
             
         # Performance Drop Handling

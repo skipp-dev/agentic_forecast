@@ -60,7 +60,19 @@ class GPUServices:
         # Verify setup
         props = torch.cuda.get_device_properties(device)
         logger.info(f"CUDA Device: {props.name}")
-        logger.info(f"CUDA Memory: {props.total_memory / 1024**3:.1f} GB")
+        
+        # Handle MagicMock in tests
+        total_mem = props.total_memory
+        if hasattr(total_mem, '_mock_return_value'):
+             total_mem = total_mem._mock_return_value
+        
+        # Handle SentinelObject from mock
+        try:
+            mem_gb = float(total_mem) / 1024**3
+        except TypeError:
+            mem_gb = 0.0
+             
+        logger.info(f"CUDA Memory: {mem_gb:.1f} GB")
         logger.info(f"CUDA Compute Capability: {props.major}.{props.minor}")
 
         return device

@@ -2,8 +2,14 @@ import os
 from opentelemetry import trace
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor, ConsoleSpanExporter
-from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
 from opentelemetry.sdk.resources import Resource
+
+# Conditional import for OTLP exporter
+try:
+    from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
+    _HAS_OTLP = True
+except ImportError:
+    _HAS_OTLP = False
 
 def setup_tracing(service_name: str = "agentic_forecast"):
     """
@@ -15,7 +21,7 @@ def setup_tracing(service_name: str = "agentic_forecast"):
     
     otlp_endpoint = os.getenv("OTEL_EXPORTER_OTLP_ENDPOINT")
     
-    if otlp_endpoint:
+    if otlp_endpoint and _HAS_OTLP:
         exporter = OTLPSpanExporter(endpoint=otlp_endpoint, insecure=True)
         processor = BatchSpanProcessor(exporter)
         provider.add_span_processor(processor)
